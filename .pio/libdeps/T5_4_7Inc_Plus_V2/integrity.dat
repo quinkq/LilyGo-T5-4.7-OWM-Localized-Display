@@ -1,0 +1,5 @@
+ESP32Async/ESPAsyncWebServer
+Wire
+bblanchon/ArduinoJson@^6.19.4
+ESP32Async/AsyncTCP
+https://github.com/Xinyuan-LilyGO/LilyGo-EPD47.git#esp32s3

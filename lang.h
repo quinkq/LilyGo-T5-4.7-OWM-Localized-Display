@@ -1,71 +1,77 @@
+#ifndef LANG_H
+#define LANG_H
+
+#include <Arduino.h>
+#include <ArduinoJson.h>
+
 #define FONT(x) x##_tf
 
 //Temperature - Humidity - Forecast
-const String TXT_FORECAST_VALUES  = "3-Day Forecast Values";
-const String TXT_CONDITIONS       = "Conditions";
-const String TXT_DAYS             = "(Days)";
-const String TXT_TEMPERATURES     = "Temperature";
-const String TXT_TEMPERATURE_C    = "Temperature (°C)";
-const String TXT_TEMPERATURE_F    = "Temperature (°F)";
-const String TXT_HUMIDITY_PERCENT = "Humidity (%)";
+extern const String TXT_FORECAST_VALUES;
+extern const String TXT_CONDITIONS;
+extern const String TXT_DAYS;
+extern const String TXT_TEMPERATURES;
+extern const String TXT_TEMPERATURE_C;
+extern const String TXT_TEMPERATURE_F;
+extern const String TXT_HUMIDITY_PERCENT;
 
 // Pressure
-const String TXT_PRESSURE         = "Pressure";
-const String TXT_PRESSURE_HPA     = "Pressure (hPa)";
-const String TXT_PRESSURE_IN      = "Pressure (in)";
-const String TXT_PRESSURE_STEADY  = "Steady";
-const String TXT_PRESSURE_RISING  = "Rising";
-const String TXT_PRESSURE_FALLING = "Falling";
+extern const String TXT_PRESSURE;
+extern const String TXT_PRESSURE_HPA;
+extern const String TXT_PRESSURE_IN;
+extern const String TXT_PRESSURE_STEADY;
+extern const String TXT_PRESSURE_RISING;
+extern const String TXT_PRESSURE_FALLING;
 
 //RainFall / SnowFall
-const String TXT_RAINFALL_MM = "Rainfall (mm)";
-const String TXT_RAINFALL_IN = "Rainfall (in)";
-const String TXT_SNOWFALL_MM = "Snowfall (mm)";
-const String TXT_SNOWFALL_IN = "Snowfall (in)";
-const String TXT_PRECIPITATION_SOON = "Prec.";
-
+extern const String TXT_RAINFALL_MM;
+extern const String TXT_RAINFALL_IN;
+extern const String TXT_SNOWFALL_MM;
+extern const String TXT_SNOWFALL_IN;
+extern const String TXT_PRECIPITATION_SOON;
 
 //Sun
-const String TXT_SUNRISE  = "Sunrise";
-const String TXT_SUNSET   = "Sunset";
+extern const String TXT_SUNRISE;
+extern const String TXT_SUNSET;
 
 //Moon
-const String TXT_MOON_NEW             = "New";
-const String TXT_MOON_WAXING_CRESCENT = "Waxing Crescent";
-const String TXT_MOON_FIRST_QUARTER   = "First Quarter";
-const String TXT_MOON_WAXING_GIBBOUS  = "Waxing Gibbous";
-const String TXT_MOON_FULL            = "Full";
-const String TXT_MOON_WANING_GIBBOUS  = "Waning Gibbous";
-const String TXT_MOON_THIRD_QUARTER   = "Third Quarter";
-const String TXT_MOON_WANING_CRESCENT = "Waning Crescent";
+extern const String TXT_MOON_NEW;
+extern const String TXT_MOON_WAXING_CRESCENT;
+extern const String TXT_MOON_FIRST_QUARTER;
+extern const String TXT_MOON_WAXING_GIBBOUS;
+extern const String TXT_MOON_FULL;
+extern const String TXT_MOON_WANING_GIBBOUS;
+extern const String TXT_MOON_THIRD_QUARTER;
+extern const String TXT_MOON_WANING_CRESCENT;
 
 //Power / WiFi
-const String TXT_POWER  = "Power";
-const String TXT_WIFI   = "WiFi";
-const char* TXT_UPDATED = "Updated:";
-
+extern const String TXT_POWER;
+extern const String TXT_WIFI;
+extern const char* TXT_UPDATED;
 
 //Wind
-const String TXT_WIND_SPEED_DIRECTION = "Wind Speed/Direction";
-const String TXT_N   = "N";
-const String TXT_NNE = "NNE";
-const String TXT_NE  = "NE";
-const String TXT_ENE = "ENE";
-const String TXT_E   = "E";
-const String TXT_ESE = "ESE";
-const String TXT_SE  = "SE";
-const String TXT_SSE = "SSE";
-const String TXT_S   = "S";
-const String TXT_SSW = "SSW";
-const String TXT_SW  = "SW";
-const String TXT_WSW = "WSW";
-const String TXT_W   = "W";
-const String TXT_WNW = "WNW";
-const String TXT_NW  = "NW";
-const String TXT_NNW = "NNW";
+extern const String TXT_WIND_SPEED_DIRECTION;
+extern const String TXT_N;
+extern const String TXT_NNE;
+extern const String TXT_NE;
+extern const String TXT_ENE;
+extern const String TXT_E;
+extern const String TXT_ESE;
+extern const String TXT_SE;
+extern const String TXT_SSE;
+extern const String TXT_S;
+extern const String TXT_SSW;
+extern const String TXT_SW;
+extern const String TXT_WSW;
+extern const String TXT_W;
+extern const String TXT_WNW;
+extern const String TXT_NW;
+extern const String TXT_NNW;
 
 //Day of the week
-const char* weekday_D[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+extern const char* weekday_D[];
 
 //Month
-const char* month_M[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+extern const char* month_M[];
+
+#endif // LANG_H
