@@ -13,8 +13,8 @@ Maintains original functionality - downloading OWM Weather via API, configuratio
 
 - employed button for display selection/switching to better handle data (more to be added)
 
-<img src="https://github.com/user-attachments/assets/95a5b678-3eb7-4179-ae55-b6922c1c2e5f" width="533" height="300">
-<img src="https://github.com/user-attachments/assets/cc47ac2d-3de3-46f2-a563-65018a9e7be8" width="533" height="400">
+<img src="https://github.com/user-attachments/assets/95a5b678-3eb7-4179-ae55-b6922c1c2e5f" width="533" height="380">
+<img src="https://github.com/user-attachments/assets/cc47ac2d-3de3-46f2-a563-65018a9e7be8" width="533" height="380">
 
 Planned:
 - command repeating via ESP-NOW issued via web
