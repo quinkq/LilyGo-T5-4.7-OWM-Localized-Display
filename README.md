@@ -17,6 +17,8 @@ Maintains original functionality - downloading OWM Weather via API, configuratio
 <img src="https://github.com/user-attachments/assets/95a5b678-3eb7-4179-ae55-b6922c1c2e5f" width="533" height="380">
 <img src="https://github.com/user-attachments/assets/cc47ac2d-3de3-46f2-a563-65018a9e7be8" width="533" height="380">
 
+- included modified original font converting script to create headers with polish diacritics
+
 Planned:
 - additional control commands repeating via ESP-NOW to auxillary ESP
 - much needed optimization
