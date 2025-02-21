@@ -1,6 +1,6 @@
 My take on #LilyGo-EPD-4-7-OWM-Weather-Display with adapting for own purposes.
 
-<img src="https://github.com/user-attachments/assets/960a10ec-9fd1-4a30-b223-8aa1ab20414d" width="533" height="380">
+<img src="https://github.com/user-attachments/assets/33f88d13-cfac-4c53-ae1c-6c4ebd69de17" width="533" height="380">
 
 Maintains original functionality - downloading OWM Weather via API, configuration AP, E-INK display handling and now:
 - employed FreeRTOS to facilitate concurrent sensor readings, calculations, running webserver and future tasks
@@ -14,8 +14,8 @@ Maintains original functionality - downloading OWM Weather via API, configuratio
 - figurationched webserver uses same async server now and offers OTA update functionality
 - employed external tactile switch for display selection/switching to better handle available data (more to be added)
 
-<img src="https://github.com/user-attachments/assets/95a5b678-3eb7-4179-ae55-b6922c1c2e5f" width="533" height="380">
-<img src="https://github.com/user-attachments/assets/cc47ac2d-3de3-46f2-a563-65018a9e7be8" width="533" height="380">
+<img src="https://github.com/user-attachments/assets/80480141-9f3e-458a-a08e-a9a692c5db92" width="533" height="380">
+<img src="https://github.com/user-attachments/assets/d98e1fc9-a67f-4e72-9a7a-6392e64241f0" width="533" height="380">
 
 - included modified original font converting script to create headers with polish diacritics
 
