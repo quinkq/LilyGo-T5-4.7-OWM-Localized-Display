@@ -1,98 +1,70 @@
 #include <WiFi.h>
-#include <WiFiClient.h>
-#include <WebServer.h>
 #include <ESPmDNS.h>
 #include <esp_heap_caps.h>
 #include <ArduinoJson.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
+#include <SPIFFS.h>
+#include <ESPAsyncWebServer.h>
+#include <ElegantOTA.h>
+
 #include <web.h>
 
-#include "FS.h"
-#include "SPIFFS.h"
-
-
 bool configDone = false;
-static WebServer server(80);
+static AsyncWebServer configServer(80);
 
-void storeConfig();
+void storeConfigFromRequest(AsyncWebServerRequest *request);
 
-void handleRoot()
+void handleRoot(AsyncWebServerRequest *request)
 {
-    server.send(200, "text/plain", "hello from esp32!");
+    request->send(200, "text/plain", "hello from ESP32!");
 }
 
-
-void handleSettings()
+void handleSettings(AsyncWebServerRequest *request)
 {
-    File file = SPIFFS.open("/config.html", "r");
-    if (!file)
-    {
-        Serial.println("file error");
-    }
-    server.streamFile(file, "text/html");
-    file.close();
+    request->send(SPIFFS, "/config.html", "text/html");
 }
 
-
-void handleConfig()
+void handleConfig(AsyncWebServerRequest *request)
 {
     Serial.println("Saving configuration...");
-    storeConfig();  // Saves the configuration data
 
-    configDone = true;  // Mark configuration as completed
-
-    File htmlfile = SPIFFS.open("/config.html", "r");
-    if (!htmlfile)
+    if (request->hasParam("ssid", true)) // true = look in POST
     {
-        Serial.println("file error");
-        server.send(500, "text/plain", "Config file missing!");
-        return;
+        Serial.println("Processing settings...");
+        storeConfigFromRequest(request);
+        configDone = true;
+        request->send(SPIFFS, "/config.html", "text/html");
     }
-
-    server.streamFile(htmlfile, "text/html");
-    htmlfile.close();
-
-    Serial.println("Configuration saved. Web server can now be stopped.");
+    else
+    {
+        request->send(400, "text/plain", "Invalid request");
+    }
 }
 
-
-void handleNotFound()
+void handleNotFound(AsyncWebServerRequest *request)
 {
     String message = "File Not Found\n\n";
-    message += "URI: ";
-    message += server.uri();
-    message += "\nMethod: ";
-    message += (server.method() == HTTP_GET) ? "GET" : "POST";
-    message += "\nArguments: ";
-    message += server.args();
-    message += "\n";
-    for (uint8_t i = 0; i < server.args(); i++)
-    {
-        message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
-    }
-    server.send(404, "text/plain", message);
+    message += "URI: " + request->url();
+    request->send(404, "text/plain", message);
 }
-
 
 void setupAP()
 {
-    //WiFi.persistent(false);     // Prevent settings from being stored in flash
-    WiFi.disconnect(true);      // Disconnect and delete old config
+    WiFi.disconnect(true);
     WiFi.softAPdisconnect(true);
-    //WiFi.mode(WIFI_OFF);
 
     Serial.println("Configuring access point...");
     uint8_t mac[6];
     char buff[32] = {0};
     WiFi.macAddress(mac);
     sprintf(buff, "T-EPD47-%02X%02X", mac[4], mac[5]);
-    const char *apPassword = "config1212";  // Set your AP password here (8-63 chars)
+
+    const char *apPassword = "config32s3";
     bool success = WiFi.softAP(buff, apPassword, 1, false, 1);
     if (success)
     {
-    Serial.printf("The hotspot has been established");
-    Serial.printf("please connect to the %s and output 192.168.4.1/settings in the browser to access the data page \n", buff);
+        Serial.printf("The hotspot has been established");
+        Serial.printf("please connect to the %s and output 192.168.4.1/settings in the browser to access the data page \n", buff);
+        Serial.printf("for firmware update go to 192.168.4.1/update in the browser \n", buff);
     }
     else
     {
@@ -100,115 +72,79 @@ void setupAP()
     }
 }
 
-
-void webTask(void *args)
-{
-    while (1)
-    {
-        server.handleClient();
-        delay(10); //allow the cpu to switch to other tasks
-    }
-    vTaskDelete(NULL);
-}
-
-
-void setupWEB(void)
+void setupConfigWEB()
 {
     Serial.begin(115200);
     setupAP();
+    // Initialize ElegantOTA with AsyncWebServer
+    ElegantOTA.begin(&configServer);  // Start ElegantOTA
 
-    server.on("/", handleRoot);
-    server.on("/settings", handleSettings);
-    server.on("/config", HTTP_POST, handleConfig);
-    server.on("/config", HTTP_GET, []() {
-        File file = SPIFFS.open("/config.json", "r");
-        size_t sent = server.streamFile(file, "application/json");
-        file.close();
-        return;
+    // Serve static files from SPIFFS
+    configServer.serveStatic("/", SPIFFS, "/").setDefaultFile("config.html");
+
+    // Define routes
+    configServer.on("/", HTTP_GET, handleRoot);
+    configServer.on("/settings", HTTP_GET, handleSettings);
+    configServer.on("/config", HTTP_POST, handleConfig);
+    configServer.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(SPIFFS, "/config.json", "application/json");
     });
-    server.on("/restart", HTTP_GET, []() {
-        server.send(200);
+    configServer.on("/restart", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/plain", "Restarting...");
         delay(1000);
         ESP.restart();
-        return;
     });
 
-    server.onNotFound(handleNotFound);
+    // Handle 404 Not Found
+    configServer.onNotFound(handleNotFound);
+    configServer.begin();
 
-    server.begin();
-    Serial.println("HTTP server started");
-
-    TaskHandle_t t1;
-    xTaskCreatePinnedToCore((void (*)(void *))webTask, "webTask", 8192, NULL, 10, &t1, 0);
+    Serial.println("HTTP configServer started");
 }
 
-
-void storeConfig()
+void storeConfigFromRequest(AsyncWebServerRequest *request)
 {
     StaticJsonDocument<1024> doc;
 
     File configfile = SPIFFS.open("/config.json", "r");
-    DeserializationError error = deserializeJson(doc, configfile);
-    if (error)
-        Serial.println(F("Failed to read file, using default configuration"));
-    configfile.close();
-
-    for ( uint8_t i = 0; i < server.args(); i++ )
+    if (configfile)
     {
-        if (server.argName(i).equals("ssid"))
-        {
-            doc["WLAN"]["ssid"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("password"))
-        {
-            doc["WLAN"]["password"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("apikey"))
-        {
-            doc["OpenWeather"]["apikey"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("server"))
-        {
-            doc["OpenWeather"]["server"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("country"))
-        {
-            doc["OpenWeather"]["country"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("city"))
-        {
-            doc["OpenWeather"]["city"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("hemisphere"))
-        {
-            doc["OpenWeather"]["hemisphere"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("units"))
-        {
-            doc["OpenWeather"]["units"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("ntp_server"))
-        {
-            doc["ntp"]["server"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("ntp_timezone"))
-        {
-            doc["ntp"]["timezone"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("on_time"))
-        {
-            doc["schedule_power"]["on_time"] = server.arg(i);
-        }
-        else if (server.argName(i).equals("off_time"))
-        {
-            doc["schedule_power"]["off_time"] = server.arg(i);
-        }
+        DeserializationError error = deserializeJson(doc, configfile);
+        if (error)
+            Serial.println(F("Failed to read file, using default configuration"));
+        configfile.close();
     }
+
+    // Process form parameters
+    if (request->hasParam("ssid", true))
+        doc["WLAN"]["ssid"] = request->getParam("ssid", true)->value();
+    if (request->hasParam("password", true))
+        doc["WLAN"]["password"] = request->getParam("password", true)->value();
+    if (request->hasParam("apikey", true))
+        doc["OpenWeather"]["apikey"] = request->getParam("apikey", true)->value();
+    if (request->hasParam("configServer", true))
+        doc["OpenWeather"]["configServer"] = request->getParam("configServer", true)->value();
+    if (request->hasParam("country", true))
+        doc["OpenWeather"]["country"] = request->getParam("country", true)->value();
+    if (request->hasParam("city", true))
+        doc["OpenWeather"]["city"] = request->getParam("city", true)->value();
+    if (request->hasParam("hemisphere", true))
+        doc["OpenWeather"]["hemisphere"] = request->getParam("hemisphere", true)->value();
+    if (request->hasParam("units", true))
+        doc["OpenWeather"]["units"] = request->getParam("units", true)->value();
+    if (request->hasParam("ntp_server", true))
+        doc["ntp"]["configServer"] = request->getParam("ntp_server", true)->value();
+    if (request->hasParam("ntp_timezone", true))
+        doc["ntp"]["timezone"] = request->getParam("ntp_timezone", true)->value();
+    if (request->hasParam("on_time", true))
+        doc["schedule_power"]["on_time"] = request->getParam("on_time", true)->value();
+    if (request->hasParam("off_time", true))
+        doc["schedule_power"]["off_time"] = request->getParam("off_time", true)->value();
 
     configfile = SPIFFS.open("/config.json", FILE_WRITE);
     if (!configfile)
     {
-        Serial.println("file error");
+        Serial.println("File error");
     }
     if (serializeJson(doc, configfile) == 0)
     {
@@ -217,8 +153,8 @@ void storeConfig()
     configfile.close();
 }
 
-void stopWebServer() 
+void stopWebServer()
 {
     Serial.println("Stopping web server...");
-    server.stop();
+    configServer.end();
 }

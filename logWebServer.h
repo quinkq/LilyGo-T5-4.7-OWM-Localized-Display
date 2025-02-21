@@ -8,7 +8,7 @@
 // Web server object
 extern AsyncWebServer logServer;  
 
-void setupWebServer();
+void setupLogWebServer();
 int getTimeLimit(const String &range);
 void calculateMinMax(const char* filename, int timeLimit, StaticJsonDocument<512> &jsonDoc, const char* prefix);
 String generateCSVData(File &file, String range);

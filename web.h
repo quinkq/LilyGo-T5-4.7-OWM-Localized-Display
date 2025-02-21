@@ -3,7 +3,7 @@
 
 extern bool configDone;
 
-void setupWEB(void);
+void setupConfigWEB(void);
 void stopWebServer();
 
 #endif

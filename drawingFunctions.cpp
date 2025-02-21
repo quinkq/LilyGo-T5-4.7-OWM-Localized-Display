@@ -89,7 +89,7 @@ void addrain(int x, int y, int scale, const IconSize &size)
     }
     else if(&size == &LargeIcon)
     {
-        setFont(OpenSans18B);
+        setFont(OpenSansB18);
         drawString(x - 60, y + 25, "///////", LEFT);
     }
 }
@@ -103,7 +103,7 @@ void addsnow(int x, int y, int scale, const IconSize &size)
     }
     else if(&size == &LargeIcon)
     {
-        setFont(OpenSans18B);
+        setFont(OpenSansB18);
         drawString(x - 60, y + 30, "* * * *", LEFT);
     }
 }
@@ -175,9 +175,9 @@ void Sunny(int x, int y, const IconSize &size, String IconName)
     int scale = size.scale; 
     int Offset = size.Offset;
 
-    if(&size == &SmallIcon){
-        y = y - 3; // Shift small sun icon slightly up
-    }
+    //if(&size == &SmallIcon){
+        y = y - 12; // Shift small sun icon slightly up
+    //}
 
     if (IconName.endsWith("n")){
         addmoon(x, y + Offset, scale, size);
@@ -354,9 +354,9 @@ void addmoon(int x, int y, int scale, const IconSize &size)
 void Nodata(int x, int y, IconSize &size, String IconName)
 {
     if (&size == &LargeIcon)
-        setFont(OpenSans24B);
+        setFont(OpenSansB24);
     else if(&size == &SmallIcon){
-        setFont(OpenSans12B);
+        setFont(OpenSansB12);
     }
     drawString(x - 3, y - 10, "?", CENTER);
 }

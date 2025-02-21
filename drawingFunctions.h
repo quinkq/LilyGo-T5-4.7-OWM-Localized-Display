@@ -8,24 +8,8 @@
 #include "epd_driver.h"        // https://github.com/Xinyuan-LilyGO/LilyGo-EPD47
 #include "esp_adc_cal.h"       // In-built
 
-//#include <ArduinoJson.h> // https://github.com/bblanchon/ArduinoJson
-//#include <HTTPClient.h>  // In-built
-
-/*
-#include <WiFi.h> // In-built
-#include <SPI.h>  // In-built
-#include <time.h> // In-built
-#include "SPIFFS.h"
-#include "FS.h"
-*/
-
-//#include "esp_system.h"
-//#include "esp_err.h"
-
 #include "lang.h"
-#include "forecast_record.h"
 
-//#include "LilyGo-EPD-4-7-OWM-Weather-Display.h"
 
 #define White     0xFF
 #define LightGrey 0xBB
@@ -48,9 +32,13 @@ extern int vref;
 //fonts
 #include "opensans8b.h"
 #include "opensans10b.h"
-#include "opensans12b.h"
-#include "opensans18b.h"
-#include "opensans24b.h"
+#include "opensansB12PL.h"
+#include "opensansB16PL.h"
+#include "opensansb18pl.h"
+#include "opensansb24pl.h"
+#include "opensansb28pl.h"
+#include "opensansb40pl.h"
+#include "opensansb50pl.h"
 
 extern GFXfont currentFont;
 extern uint8_t *framebuffer;

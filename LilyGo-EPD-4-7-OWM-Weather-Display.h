@@ -7,6 +7,39 @@
 #include "drawingFunctions.h"
 #include "lang.h"
 
+typedef struct
+{ // For current Day and Day 1, 2, 3, etc
+    int Dt;
+    String Period;
+    String Icon;
+    String Trend;
+    String Main0;
+    String Forecast0;
+    String Forecast1;
+    String Forecast2;
+    String Description;
+    String Time;
+    String Country;
+    float lat;
+    float lon;
+    float Temperature;
+    float Feelslike;
+    float Humidity;
+    float High;
+    float Low;
+    float Winddir;
+    float Windspeed;
+    float Rainfall;
+    float Snowfall;
+    float Pop;
+    float Pressure;
+    int Cloudcover;
+    int Visibility;
+    int Sunrise;
+    int Sunset;
+    int Timezone;
+} Forecast_record_type;
+
 
 void InitialiseDisplay();
 void InitialiseSystem();
@@ -25,9 +58,12 @@ void RenderWindSection(int x, int y, float angle, float windspeed, int Cradius);
 String WindDegToOrdinalDirection(float winddirection);
 
 void RenderTemperatureSection(int x, int y);
-void RenderSensorReadings(int x, int y);
+
 void RenderSensorReadingsGarden(int x, int y);
+void RenderXLSensorReadingsGarden(int x, int y);
 void RenderSensorReadingsRoom(int x, int y);
+void RenderXLSensorReadingsRoom(int x, int y);
+
 void RenderForecastTextSection(int x, int y);
 void RenderPressureSection(int x, int y, float pressure, String slope);
 void RenderForecastWeather(int x, int y, int index);

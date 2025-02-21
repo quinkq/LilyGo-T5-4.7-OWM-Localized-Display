@@ -7,7 +7,7 @@ const char* outsideLogFile = "/outside_log.csv";
 
 AsyncWebServer logServer(80);  
 
-void setupWebServer() {
+void setupLogWebServer() {
     logServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SD, "/index.html", "text/html");
     });

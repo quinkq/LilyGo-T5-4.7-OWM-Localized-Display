@@ -27,15 +27,12 @@
 
 // Misc / initial configuration webserver
 #include "owm_credentials.h"
-#include "forecast_record.h"
-#include "web.h"
 #include "LilyGo-EPD-4-7-OWM-Weather-Display.h"
+#include "web.h"
 
-//Webserver / logging
+// loggingWebserver
 #include <SD.h>
 #include <logWebServer.h>
-//!
-//#include <ESPAsyncWebServer.h>
 
 //Power saving
 #include "esp_pm.h"
@@ -132,7 +129,7 @@ bool timeIsSet = false;
 int WiFiStatus = WL_DISCONNECTED;
 
 // Web logserver
-#define MAX_ENTRIES 365
+#define MAX_ENTRIES 100000
 
 File insideFile, outsideFile;
 
@@ -230,7 +227,7 @@ void setupSDCard()
     }
 }
 
-// Maintaining circular buffer by limiting entries to 365
+// Maintaining circular buffer by limiting entries to 100000
 void maintainCircularBuffer(const char *filename) {
     File file = SD.open(filename, FILE_READ);
     if (!file) {
@@ -298,7 +295,7 @@ void InitialiseSystem()
     StartTime = millis();
     Serial.begin(115200);
 
-    unsigned long serialTimeout = millis(); // if serial hasn't started, wait for it 3000 
+    unsigned long serialTimeout = millis(); // if serial hasn't started, wait for it 3 s
     while (!Serial && (millis() - serialTimeout < 3000))
     {
         delay(200);
@@ -306,8 +303,7 @@ void InitialiseSystem()
     Serial.println(String(__FILE__) + "\nInitializing System...");
     
     SPI.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);  // Initialise SPI bus for SD card
-    ESP_ERROR_CHECK(i2cdev_init()); // Initialize the I2C bus
-    //delay(1000);
+    ESP_ERROR_CHECK(i2cdev_init()); // Initialize the I2C bus for SHT41
     InitialiseDisplay();
     setupSDCard();
 }
@@ -316,8 +312,8 @@ boolean SetTime()
 {
     const char* ntpServerCStr = ntpServer.c_str();  // Convert String to const char*
     configTime(0, 0, const_cast<const char *>(ntpServer.c_str()), ntpServerCStr); //(gmtOffset_sec, daylightOffset_sec, ntpServer)
-    setenv("TZ", const_cast<const char *>(Timezone.c_str()), 1);                                                 //setenv()adds the "TZ" variable to the environment with a value TimeZone, only used if set to 1, 0 means no change
-    tzset();                                                                   // Set the TZ environment variable
+    setenv("TZ", const_cast<const char *>(Timezone.c_str()), 1); //setenv()adds the "TZ" variable to the environment with a value TimeZone, only used if set to 1, 0 means no change
+    tzset(); // Set the TZ environment variable
     delay(100);
     return UpdateLocalTime();
 }
@@ -572,32 +568,38 @@ bool obtainWeatherData(WiFiClient &client, const String &RequestType)
     return true;
 }
 
+
+//################## Rendering functions ##################
+
 void Render_Screen0()
 {   // 4.7" e-paper display is 960x540 resolution
     RenderStatusSection(600, 20, wifi_signal); // Wi-Fi signal strength and Battery voltage
     RenderGeneralInfoSection();                // Top line of the display
 
-    RenderWindSection(137, 150, WxConditions[0].Winddir, WxConditions[0].Windspeed*3.6, 100); // Converting wind speed from m/s to km/h for display
-    RenderAstronomySection(5, 255);     // Astronomy section Sun rise/set, Moon phase and Moon icon
+    RenderWindSection(150, 160, WxConditions[0].Winddir, WxConditions[0].Windspeed*3.6, 100); // Converting wind speed from m/s to km/h for display
+    RenderAstronomySection(5, 265);     // Astronomy section Sun rise/set, Moon phase and Moon icon
 
-    RenderMainWeatherSection(320, 130); // Centre section of display for Location, temperature, Weather report, current Wx Symbol
-    RenderSensorReadings(320, 210);     // Local sensor readings section
-    RenderWeatherIcon(780, 133);        // Display weather icon    scale = Large
-//////////////
+    RenderSensorReadingsGarden(320, 35);
+    RenderSensorReadingsRoom(650, 35);
+
+    RenderMainWeatherSection(320, 180); // Centre section of display for Location, temperature, Weather report, current Wx Symbol
+    RenderWeatherIcon(780, 300);        // Display weather icon    scale = Large
+
     RenderForecastSection(0, 370);    // 3hr forecast boxes (was 320x220)
 }
 
 void Render_Screen1()
-{   // 4.7" e-paper display is 960x540 resolution
+{   // XL Display of readings for almost blind grandpa
     RenderStatusSection(600, 20, wifi_signal); // Wi-Fi signal strength and Battery voltage
     RenderGeneralInfoSection();                // Top line of the display
 
-    RenderSensorReadings(30, 80);
-    RenderWeatherIcon(650, 150);        // Display weather icon    scale = Large
+    RenderXLSensorReadingsGarden(10, 35);
+    RenderXLSensorReadingsRoom(10+485, 35);
+    drawLine(480, 50, 480, 300, DarkGrey);
 }
 
 void Render_Screen2()
-{   // 4.7" e-paper display is 960x540 resolution
+{   // Graph Screen
     RenderStatusSection(600, 20, wifi_signal); // Wi-Fi signal strength and Battery voltage
     RenderGeneralInfoSection();                // Top line of the display
 
@@ -617,104 +619,22 @@ void renderDisplay(volatile int &screenState)
     }
 }
 
-void RenderWeatherIcon(int x, int y)
+void RenderStatusSection(int x, int y, int rssi)
 {
-    RenderConditionsSection(x, y, WxConditions[0].Icon, LargeIcon);
-}
-
-void RenderMainWeatherSection(int x, int y)
-{
-    RenderTemperatureSection(x, y - 40);
-    RenderForecastTextSection(x-30, y-10);
-    RenderPressureSection(x+20, y+32, WxConditions[0].Pressure, WxConditions[0].Trend);
+    setFont(OpenSans10B);
+    DrawRSSI(x + 310, y + 15, rssi);
+    DrawBattery(x + 150, y);
 }
 
 void RenderGeneralInfoSection()
 {
-    setFont(OpenSans12B);
-    drawString(5, 5, City, LEFT);
-    setFont(OpenSans12B);
-    drawString(110, 2, Date_str, LEFT);
+    //setFont(OpenSansB12);
+    //drawString(8, 9, City, LEFT);
+    setFont(OpenSansB12);
+    drawString(10, 1, Date_str, LEFT);
     setFont(OpenSans10B);
-    drawString(320, 2, "Aktualizacja: " + String(ConvertUnixTimeForDisplay(time(NULL))), LEFT);
-}
-
-void RenderSensorReadings(int x, int y)
-{
-    //drawLine(480, 10, 480, 500, DarkGrey);
-    //drawLine(200, 40, 910, 40, DarkGrey);
-    RenderSensorReadingsGarden(x, y);
-    RenderSensorReadingsRoom(x+245, y);
-    //drawLine(480, 310, 940, 310, DarkGrey);
-}
-
-void RenderSensorReadingsGarden(int x, int y)
-{
-    if(dataReceivedFlag == true) 
-    {
-        setFont(OpenSans12B);
-        drawString(x, y, "Czujnik ZEWN.", LEFT);
-        setFont(OpenSans8B);
-        drawString(x, y+30, String(ConvertUnixTimeForDisplay(receivedData.timestamp)), LEFT);
-        setFont(OpenSans24B);
-        drawString(x, y+50, String(receivedData.temperature, 1) + "°", LEFT);
-        setFont(OpenSans18B);
-        drawString(x+135, y+50, " " + String(receivedData.humidity, 0) + "%", LEFT);
-        drawString(x, y+100, String(receivedData.pressure, 0) + " hPa", LEFT);
-
-        dataReceivedFlag == false;
-    }
-    else
-    {
-        setFont(OpenSans12B);
-        drawString(x, y, "Czujnik ZEWN.", LEFT);
-        setFont(OpenSans8B);
-        drawString(x, y+30, "Akt.: --:--:--", LEFT);
-        setFont(OpenSans24B);
-        drawString(x, y+50, String("--.-") + "°", LEFT);
-        setFont(OpenSans18B);
-        drawString(x+135, y+50, " " + String("--.-") + "%", LEFT);
-        drawString(x, y+100, String("--.-") + " hPa", LEFT);
-    }
-}
-
-void RenderSensorReadingsRoom(int x, int y)
-{
-    SensorData tempData;
-    bool dataAvailable = false;
-
-    // Try to receive multiple times to empty queue
-    while (xQueueReceive(sensorDataQueue, &tempData, pdMS_TO_TICKS(500)) == pdTRUE)
-    {
-        localData = tempData;  // Store the latest received data
-        dataAvailable = true;
-    }
-
-    if (dataAvailable) {
-    //if (xQueueReceive(sensorDataQueue, &localData, pdMS_TO_TICKS(500)) == pdTRUE)
-    //{
-        ESP_LOGI("DISPLAY", "Local sensor data available.");
-        setFont(OpenSans12B);
-        drawString(x, y, "Czujnik DOM", LEFT);
-        setFont(OpenSans8B);
-        drawString(x, y+30, String(ConvertUnixTimeForDisplay(localData.timestamp)), LEFT);
-        setFont(OpenSans24B);
-        drawString(x, y+50, String(localData.temperature, 1) + "°", LEFT);
-        setFont(OpenSans18B);
-        drawString(x+135, y+50, " " + String(localData.humidity, 0) + "%", LEFT);
-    }
-    else
-    {
-        ESP_LOGW("DISPLAY", "Failed to receive processed data from queue");
-        setFont(OpenSans12B);
-        drawString(x, y, "Czujnik dom", LEFT);
-        setFont(OpenSans8B);
-        drawString(x, y+30, "Akt.: --:--:--", LEFT);
-        setFont(OpenSans24B);
-        drawString(x, y+50, String("--.-") + "°", LEFT);
-        setFont(OpenSans18B);
-        drawString(x+135, y+50, " " + String("--") + "%", LEFT);
-    }    
+    drawString(320, 1, "Aktualizacja: " + String(ConvertUnixTimeForDisplay(time(NULL))), LEFT);
+    drawLine(10, 33, 880, 33, DarkGrey);
 }
 
 void RenderWindSection(int x, int y, float angle, float windspeed, int Cradius)
@@ -752,12 +672,172 @@ void RenderWindSection(int x, int y, float angle, float windspeed, int Cradius)
     drawString(x - Cradius - 15, y - 5, TXT_W, CENTER);
     drawString(x + Cradius + 10, y - 5, TXT_E, CENTER);
     drawString(x + 3, y + 50, String(angle, 0) + "°", CENTER);
-    setFont(OpenSans12B);
+    setFont(OpenSansB12);
     drawString(x, y - 50, WindDegToOrdinalDirection(angle), CENTER);
-    setFont(OpenSans24B);
+    setFont(OpenSansB24);
     drawString(x + 3, y - 18, String(windspeed, 1), CENTER);
-    setFont(OpenSans12B);
+    setFont(OpenSansB12);
     drawString(x, y + 25, (Units == "M" ? "km/h" : "mph"), CENTER); // change from m/s
+}
+
+void RenderAstronomySection(int x, int y)
+{
+    setFont(OpenSansB12);
+    drawString(x + 5, y + 30, TXT_SUNRISE + ": " + ConvertUnixTimeForDisplay(WxConditions[0].Sunrise).substring(0, 5), LEFT);
+    drawString(x + 5, y + 50, TXT_SUNSET + ":  " + ConvertUnixTimeForDisplay(WxConditions[0].Sunset).substring(0, 5), LEFT);
+    time_t now = time(NULL);
+    struct tm *now_utc = gmtime(&now);
+    const int day_utc = now_utc->tm_mday;
+    const int month_utc = now_utc->tm_mon + 1;
+    const int year_utc = now_utc->tm_year + 1900;
+    drawString(x + 5, y + 70, MoonPhase(day_utc, month_utc, year_utc, Hemisphere), LEFT);
+    DrawMoon(x + 170, y - 33, day_utc, month_utc, year_utc, Hemisphere);
+}
+
+void RenderMainWeatherSection(int x, int y)
+{
+    drawLine(320, y-5, 940, y-5, DarkGrey);
+    RenderForecastTextSection(x-30, y);
+    RenderTemperatureSection(x, y+50);
+    RenderPressureSection(x, y+125, WxConditions[0].Pressure, WxConditions[0].Trend);
+}
+
+void RenderWeatherIcon(int x, int y)
+{
+    RenderConditionsSection(x, y, WxConditions[0].Icon, LargeIcon);
+}
+
+
+void RenderSensorReadingsGarden(int x, int y)
+{
+    if(dataReceivedFlag == true) 
+    {
+        setFont(OpenSansB12);
+        drawString(x, y-3, "Czujnik OGRÓD", LEFT);
+        setFont(OpenSans8B);
+        drawString(x, y+33, String(ConvertUnixTimeForDisplay(receivedData.timestamp)), LEFT);
+        setFont(OpenSansB28);
+        drawString(x, y+50, String(receivedData.temperature, 1) + "°", LEFT);
+        setFont(OpenSansB24);
+        drawString(x+135, y+50, "   " + String(receivedData.humidity, 0) + "%", LEFT);
+        setFont(OpenSansB18);
+        drawString(x, y+100, String(receivedData.pressure, 0) + " hPa", LEFT);
+
+        dataReceivedFlag == false;
+    }
+    else
+    {
+        setFont(OpenSansB12);
+        drawString(x, y, "Czujnik OGRÓD", LEFT);
+        setFont(OpenSansB28);
+        drawString(x, y+50, String("--.-") + "°", LEFT);
+        setFont(OpenSansB24);
+        drawString(x+135, y+50, "   " + String("--") + "%", LEFT);
+        setFont(OpenSansB18);
+        drawString(x, y+100, String("----") + " hPa", LEFT);
+    }
+}
+
+void RenderSensorReadingsRoom(int x, int y)
+{
+    SensorData tempData;
+    bool dataAvailable = false;
+
+    // Try to receive multiple times to empty queue
+    while (xQueueReceive(sensorDataQueue, &tempData, pdMS_TO_TICKS(500)) == pdTRUE)
+    {
+        localData = tempData;  // Store the latest received data
+        dataAvailable = true;
+    }
+
+    if (dataAvailable) 
+    {
+        ESP_LOGI("DISPLAY", "Local sensor data available.");
+        setFont(OpenSansB12);
+        drawString(x, y, "Czujnik DOM", LEFT);
+        setFont(OpenSans8B);
+        drawString(x, y+32, String(ConvertUnixTimeForDisplay(localData.timestamp)), LEFT);
+        setFont(OpenSansB28);
+        drawString(x, y+50, String(localData.temperature, 1) + "°", LEFT);
+        setFont(OpenSansB24);
+        drawString(x+135, y+50, "   " + String(localData.humidity, 0) + "%", LEFT);
+    }
+    else
+    {
+        ESP_LOGW("DISPLAY", "Failed to receive processed data from queue");
+        setFont(OpenSansB12);
+        drawString(x, y, "Czujnik dom", LEFT);
+        setFont(OpenSansB28);
+        drawString(x, y+50, String("--.-") + "°", LEFT);
+        setFont(OpenSansB24);
+        drawString(x+135, y+50, "   " + String("--") + "%", LEFT);
+    }    
+}
+
+void RenderXLSensorReadingsGarden(int x, int y)
+{
+    if(dataReceivedFlag == true) 
+    {
+        setFont(OpenSansB28);
+        drawString(x, y-10, "Czujnik OGRÓD", LEFT);
+        setFont(OpenSansB12);
+        drawString(x, y+75, String(ConvertUnixTimeForDisplay(receivedData.timestamp)), LEFT);
+        setFont(OpenSansB50);
+        drawString(x, y+100, String(receivedData.temperature, 1) + "°", LEFT);
+        setFont(OpenSansB40);
+        drawString(x+220, y+100, "   " + String(receivedData.humidity, 0) + "%", LEFT);
+        setFont(OpenSansB40);
+        drawString(x, y+200, String(receivedData.pressure, 0) + " hPa", LEFT);
+
+        dataReceivedFlag == false;
+    }
+    else
+    {
+        setFont(OpenSansB28);
+        drawString(x, y-10, "Czujnik OGRÓD", LEFT);
+        setFont(OpenSansB50);
+        drawString(x, y+100, String("--.-") + "°", LEFT);
+        setFont(OpenSansB40);
+        drawString(x+220, y+100, "   " + String("--") + "%", LEFT);
+        setFont(OpenSansB40);
+        drawString(x, y+200, String("----") + " hPa", LEFT);
+    }
+}
+
+void RenderXLSensorReadingsRoom(int x, int y)
+{
+    SensorData tempData;
+    bool dataAvailable = false;
+
+    // Try to receive multiple times to empty queue
+    while (xQueueReceive(sensorDataQueue, &tempData, pdMS_TO_TICKS(500)) == pdTRUE)
+    {
+        localData = tempData;  // Store the latest received data
+        dataAvailable = true;
+    }
+
+    if (dataAvailable) 
+    {
+        ESP_LOGI("DISPLAY", "Local sensor data available.");
+        setFont(OpenSansB28);
+        drawString(x, y, "Czujnik DOM", LEFT);
+        setFont(OpenSansB12);
+        drawString(x, y+75, String(ConvertUnixTimeForDisplay(localData.timestamp)), LEFT);
+        setFont(OpenSansB50);
+        drawString(x, y+100, String(localData.temperature, 1) + "°", LEFT);
+        setFont(OpenSansB40);
+        drawString(x+220, y+100, "   " + String(localData.humidity, 0) + "%", LEFT);
+    }
+    else
+    {
+        ESP_LOGW("DISPLAY", "Failed to receive processed data from queue");
+        setFont(OpenSansB28);
+        drawString(x, y, "Czujnik dom", LEFT);
+        setFont(OpenSansB50);
+        drawString(x, y+100, String("--.-") + "°", LEFT);
+        setFont(OpenSansB40);
+        drawString(x+220, y+100, "   " + String("--") + "%", LEFT);
+    }    
 }
 
 String WindDegToOrdinalDirection(float winddirection)
@@ -799,16 +879,16 @@ String WindDegToOrdinalDirection(float winddirection)
 
 void RenderTemperatureSection(int x, int y)
 {
-    setFont(OpenSans18B);
-    drawString(x, y - 40, String(WxConditions[0].Temperature, 1) + "°     " + String(WxConditions[0].Humidity, 0) + "%", LEFT);
-    setFont(OpenSans12B);
-    drawString(x, y-5, "Max " + String(WxConditions[0].High, 0) + "° | Min " + String(WxConditions[0].Low, 0) + "°", LEFT); // Show forecast high and Low
+    setFont(OpenSansB18);
+    drawString(x, y, String(WxConditions[0].Temperature, 1) + "°" + "      " + String(WxConditions[0].Humidity, 0) + "%", LEFT);
+    setFont(OpenSansB12);
+    drawString(x, y+33, "Max  " + String(WxConditions[0].High, 0) + "°  |  Min  " + String(WxConditions[0].Low, 0) + "°", LEFT); // Show forecast high and Low
 }
 
 void RenderForecastTextSection(int x, int y)
 {
 #define lineWidth 34
-    setFont(OpenSans12B);
+    setFont(OpenSansB16);
     //Wx_Description = WxConditions[0].Main0;          // e.g. typically 'Clouds'
     String Wx_Description = WxConditions[0].Forecast0; // e.g. typically 'overcast clouds' ... you choose which
     Wx_Description.replace(".", "");                   // remove any '.'
@@ -830,15 +910,15 @@ void RenderForecastTextSection(int x, int y)
     //Wx_Description = wordWrap(Wx_Description, lineWidth);
     String Line1 = Wx_Description.substring(0, Wx_Description.indexOf("~"));
     String Line2 = Wx_Description.substring(Wx_Description.indexOf("~") + 1);
-    drawString(x + 30, y + 5, TitleCase(Line1), LEFT);
+    drawString(x + 30, y + 5, "Gdańsk - " + TitleCase(Line1), LEFT);
     if (Line1 != Line2)
         drawString(x + 30, y + 30, Line2, LEFT);
 }
 
 void RenderPressureSection(int x, int y, float pressure, String slope)
 {
-    setFont(OpenSans12B);
-    DrawPressureAndTrend(x - 20, y, pressure, slope);
+    setFont(OpenSansB12);
+    DrawPressureAndTrend(x, y, pressure, slope);
     /* // Turned off visivility
     if (WxConditions[0].Visibility > 0)
     {
@@ -847,7 +927,7 @@ void RenderPressureSection(int x, int y, float pressure, String slope)
     }
     */
     // if (WxConditions[0].Cloudcover > 0) // removed if, cloud cover always being drawn
-        CloudCover(x + 135, y, WxConditions[0].Cloudcover);
+    CloudCover(x + 175, y, WxConditions[0].Cloudcover);
 }
 
 void RenderForecastWeather(int x, int y, int index)
@@ -856,23 +936,9 @@ void RenderForecastWeather(int x, int y, int index)
     x = x + fwidth * index;
     RenderConditionsSection(x + fwidth / 2, y + 90, WxForecast[index].Icon, MediumIcon); // changed from SmallIcon 
     drawLine(x+fwidth, y+10, x+fwidth, y + 160, DarkGrey); // separators
-    setFont(OpenSans12B);
+    setFont(OpenSansB12);
     drawString(x + fwidth / 2, y + 10, String(ConvertUnixTimeForDisplay(WxForecast[index].Dt + WxConditions[0].Timezone).substring(0, 5)), CENTER);
     drawString(x + fwidth / 2, y + 135, String(WxForecast[index].High, 0) + "°/" + String(WxForecast[index].Low, 0) + "°", CENTER);
-}
-
-void RenderAstronomySection(int x, int y)
-{
-    setFont(OpenSans12B);
-    drawString(x + 5, y + 30, TXT_SUNRISE + ": " + ConvertUnixTimeForDisplay(WxConditions[0].Sunrise).substring(0, 5), LEFT);
-    drawString(x + 5, y + 50, TXT_SUNSET + ":  " + ConvertUnixTimeForDisplay(WxConditions[0].Sunset).substring(0, 5), LEFT);
-    time_t now = time(NULL);
-    struct tm *now_utc = gmtime(&now);
-    const int day_utc = now_utc->tm_mday;
-    const int month_utc = now_utc->tm_mon + 1;
-    const int year_utc = now_utc->tm_year + 1900;
-    drawString(x + 5, y + 70, MoonPhase(day_utc, month_utc, year_utc, Hemisphere), LEFT);
-    DrawMoon(x + 173, y - 33, day_utc, month_utc, year_utc, Hemisphere);
 }
 
 void RenderForecastSection(int x, int y)
@@ -953,30 +1019,23 @@ void RenderConditionsSection(int x, int y, String IconName, IconSize size)
         Nodata(x, y, size, IconName);
 }
 
-void RenderStatusSection(int x, int y, int rssi)
-{
-    setFont(OpenSans10B);
-    DrawRSSI(x + 310, y + 15, rssi);
-    DrawBattery(x + 150, y);
-}
-
 void DrawPressureAndTrend(int x, int y, float pressure, String slope)
 {
-    drawString(x + 20, y, String(pressure, (Units == "M" ? 0 : 1)) + (Units == "M" ? "hPa" : "in"), LEFT);
+    drawString(x, y, String(pressure, (Units == "M" ? 0 : 1)) + (Units == "M" ? " hPa" : "in"), LEFT);
     if (slope == "+")
     {
-        DrawSegment(x, y + 10, 0, 0, 8, -8, 8, -8, 16, 0);
-        DrawSegment(x - 1, y + 10, 0, 0, 8, -8, 8, -8, 16, 0);
+        DrawSegment(115 + x, y + 10, 0, 0, 8, -8, 8, -8, 16, 0);
+        DrawSegment(115 + x - 1, y + 10, 0, 0, 8, -8, 8, -8, 16, 0);
     }
     else if (slope == "0")
     {
-        DrawSegment(x, y + 10, 8, -8, 16, 0, 8, 8, 16, 0);
-        DrawSegment(x - 1, y + 10, 8, -8, 16, 0, 8, 8, 16, 0);
+        DrawSegment(115 + x, y + 10, 8, -8, 16, 0, 8, 8, 16, 0);
+        DrawSegment(115 + x - 1, y + 10, 8, -8, 16, 0, 8, 8, 16, 0);
     }
     else if (slope == "-")
     {
-        DrawSegment(x, y + 10, 0, 0, 8, 8, 8, 8, 16, 0);
-        DrawSegment(x - 1, y + 10, 0, 0, 8, 8, 8, 8, 16, 0);
+        DrawSegment(115 + x, y + 10, 0, 0, 8, 8, 8, 8, 16, 0);
+        DrawSegment(115 + x - 1, y + 10, 0, 0, 8, 8, 8, 8, 16, 0);
     }
 }
 
@@ -1096,7 +1155,7 @@ void epd_update()
 void ConfigWebServerTask(void *pvParameters)
 {
     Serial.println("Starting web server for configuration...");
-    setupWEB(); // Start the web server
+    setupConfigWEB(); // Start the web server
     Serial.println("Web server set up. Waiting for configuration...");
     
     // Keep the server running while waiting for config
@@ -1336,7 +1395,7 @@ void WeatherUpdateTask(void *pvParameters)
     while (1)
     {
         ESP_LOGI("wUpdate", "Awaiting OUTSIDE sensor data transmission (30s)...");
-        if(xSemaphoreTake(dataExhangeCompleteSem, pdMS_TO_TICKS(30000)) != pdTRUE) // Proceed if received packet (30s timeout) OR button press (same sem)
+        if(xSemaphoreTake(dataExhangeCompleteSem, pdMS_TO_TICKS(3000)) != pdTRUE) // Proceed if received packet (30s timeout) OR button press (same sem)
         {
             ESP_LOGE("wUpdate", "Failed to receive OUTSIDE sensor data in time.");
         }
@@ -1425,10 +1484,8 @@ void setup()
     }
     ESP_LOGI("SETUP", "Queues created successfully");
 
-    
-    // Create an event set to enable multi semaphore condition check
-    EventGroupHandle_t eventGroup = xEventGroupCreate();
-    xEventGroupSetBits(eventGroup, (1 << 0) | (1 << 1));  // Assign bits to both semaphores
+    EventGroupHandle_t eventGroup = xEventGroupCreate(); // Create an event set to enable multi semaphore condition check for IdleTask
+    xEventGroupSetBits(eventGroup, (1 << 0) | (1 << 1)); // Assign bits to both semaphores
     // Add semaphores to a queue set
     xQueueAddToSet(ButtonWakeSem, queueSet);
     xQueueAddToSet(ESPNowWakeSem, queueSet);
@@ -1448,11 +1505,11 @@ void setup()
         return;
     }
 
-    xSemaphoreTake(configSemaphore, portMAX_DELAY); // Waiting for the config task to finish
+    xSemaphoreTake(configSemaphore, portMAX_DELAY); // Waiting to load configuration or config web server to finish
 
     // Start wifi and get ntp update
-    WiFiStatus = StartWiFi();  // Function runs here
-    timeIsSet = SetTime();     // Function runs here
+    WiFiStatus = StartWiFi();  // Functions runs here
+    timeIsSet = SetTime();
     unsigned long WiFiStartTimeout = millis(); // if wifi hasn't started, wait for 5 sec
     while (!(WiFiStatus == WL_CONNECTED && timeIsSet == true) && (millis() - WiFiStartTimeout < 5000))
     {
@@ -1466,7 +1523,8 @@ void setup()
     Serial.println("ESP-NOW Init Failed");
     return;
     }
-    esp_now_register_recv_cb(OnDataRecv); // Register ESP-NOW callback
+    // Register ESP-NOW callback
+    esp_now_register_recv_cb(OnDataRecv); 
 
     // Register ESP-NOW peer (ESP32-C3 - OUTSIDE)
     esp_now_peer_info_t peerInfo = {};
@@ -1503,7 +1561,8 @@ void setup()
 
     ESP_LOGI("SETUP", "All tasks created successfully");
 
-    setupWebServer();
+    // Start logWebServer
+    setupLogWebServer();
     
 }
 
