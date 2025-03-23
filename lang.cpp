@@ -63,7 +63,7 @@ const String TXT_NW  = "NW";
 const String TXT_NNW = "NNW";
 
 //Day of the week
-const char* weekday_D[] = { "Niedziela", "Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota" };
+const char* weekday_D[] = { "Niedziela", "Poniedz.", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota" };
 
 //Month
 const char* month_M[] = { "Sty", "Lut", "Mar", "Kwi", "Maj", "Cze", "Lip", "Sie", "Wrz", "Paź", "Lis", "Gru" };

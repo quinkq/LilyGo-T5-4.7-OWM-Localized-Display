@@ -31,7 +31,7 @@ extern int vref;
 
 //fonts
 #include "opensans8b.h"
-#include "opensans10b.h"
+#include "opensansB10PL.h"
 #include "opensansB12PL.h"
 #include "opensansB16PL.h"
 #include "opensansb18pl.h"
@@ -54,6 +54,7 @@ public:
 
 extern const IconSize SmallIcon;
 extern const IconSize MediumIcon;
+extern const IconSize ForecastIcon;
 extern const IconSize LargeIcon;
 
 
@@ -66,7 +67,7 @@ enum alignment
 
 
 
-void DrawBattery(int x, int y);
+void DrawBattery(int x, int y, float voltage, uint8_t percentage);
 void DrawRSSI(int x, int y, int rssi);
 
 void addcloud(int x, int y, int scale, int linesize);

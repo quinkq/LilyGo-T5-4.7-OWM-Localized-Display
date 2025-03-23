@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Weather Station Data</title>
+    <title>Stacja pogodowa ESP32S3</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
@@ -16,163 +16,467 @@
             width: 80%;
             margin: auto;
         }
+        .data-grid {
+            display: flex;
+            justify-content: center;
+            text-align: center;
+        }
+        .data-block {
+            width: 25%;
+        }
+        .floating-selector {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(50, 50, 50, 0.9);
+            padding: 10px;
+            border-radius: 8px;
+            z-index: 1000;
+        }
         canvas {
             background-color: #d3d3d3;
             padding: 10px;
             border-radius: 10px;
+            margin-top: 10px;
         }
-        .data-section {
-            margin: 20px 0;
-        }
-        select, button {
+        select, button, input {
             padding: 5px;
             background: #333;
             color: white;
             border: none;
         }
+        .stats-container {
+        margin-bottom: 20px;
+        }
+        .stats-row {
+            margin: 10px 0;
+            line-height: 1.6;
+        }
+        .location-label {
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        .stat-label {
+            color: #cccccc; /* Light gray color */
+            margin-left: 10px;
+        }
+        .timestamp-placeholder {
+            font-size: 0.8em;
+            color: #aaaaaa; /* Even lighter gray */
+            font-style: italic;
+        }
+
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Lilygo ESP32S3 Weather Station Sensor Data</h1>
-        
-        <div class="data-section">
-            <h2>Latest Readings</h2>
-            <p>Inside Temp: <b><span id="insideTemp">--</span> °C</b> | Outside Temp: <b><span id="outsideTemp">--</span> °C</b></p>
-            <p>Inside Humidity: <b><span id="insideHumidity">--</span> %</b> | Outside Humidity: <b><span id="outsideHumidity">--</span> %</b></p>
-            <p>Outside Pressure: <b><span id="outsidePressure">--</span> hPa</b></p>
-        </div>
-
-        <div class="data-section">
-            <h2>Mininimum | Maximum Values</h2>
-            <label for="timeRange">Select Time Range:</label>
-            <select id="timeRange" onchange="updateMinMax()">
-                <option value="24h">Last 24 Hours</option>
-                <option value="week">Last 7 Days</option>
-                <option value="month">Last 30 Days</option>
-                <option value="year">Last Year</option>
-            </select>
-            <p>Inside Temp: <b><span id="insideTempMinMax">-- / --</span> °C</b> | Outside Temp: <b><span id="outsideTempMinMax">-- / --</span> °C</b></p>
-            <p>Inside Humidity: <b><span id="insideHumidityMinMax">-- / --</span> %</b> | Outside Humidity: <b><span id="outsideHumidityMinMax">-- / --</span> %</b></p>
-            <p>Outside Pressure: <b><span id="outsidePressureMinMax">-- / --</span> hPa</b></p>
-        </div>
-
-        <div class="data-section">
-            <h2>Graph Range</h2>
-            <select id="graphRange" onchange="fetchGraphData()">
-                <option value="24h">Last 24 Hours</option>
-                <option value="week">Last 7 Days</option>
-                <option value="month">Last 30 Days</option>
-                <option value="year">Last Year</option>
-            </select>
-        </div>
-
-        <canvas id="tempChart"></canvas>
-        <canvas id="humidityChart"></canvas>
-        <canvas id="pressureChart"></canvas>
-        
-        <h2>Download CSV Data</h2>
-        <select id="range">
-            <option value="24h">Last 24 Hours</option>
-            <option value="week">Last Week</option>
-            <option value="month">Last Month</option>
-            <option value="year">Last Year</option>
+    <div class="floating-selector">
+        <label for="globalRange">Wybierz zakres:</label>
+        <select id="globalRange" onchange="updateAllData()">
+            <option value="24h">Ostatnie 24 godz.</option>
+            <option value="week">Ostatni tydzień</option>
+            <option value="month">Ostatnie 30 dni</option>
+            <option value="year">Ostatni rok</option>
+            <option value="custom">Niestandardowy zakres</option>
         </select>
-        <button onclick="downloadCSV('inside')">Download Inside Data</button>
-        <button onclick="downloadCSV('outside')">Download Outside Data</button>
+        <div id="customDateSelectors" style="display: none;">
+            <label for="startDate">Początkowa data:</label>
+            <input type="date" id="startDate">
+            
+            <label for="endDate">Końcowa data:</label>
+            <input type="date" id="endDate">
+            
+            <button onclick="updateCustomRange()">Zatwierdź</button>
+        </div>
     </div>
 
+    <div class="container">
+        <h1 style="color: #cccccc; font-size:300%;">Stacja pogodowa ESP32S3</h1>
+        
+        <div class="data-section">
+            <P><span class="location-label" style="font-size: 1.5em;" id="currentTime"></span></P>
+            <h2 style="color: #cccccc; font-size:2em;">Aktualne pomiary:</h2>
+            <div class="data-grid">
+                <div class="data-block">
+                    <h3>OGRÓD 🪴</h3>
+                    <p><span class="stat-label">Temperatura:</span> <b><span id="oT">--</span> °C</b></p>
+                    <p><span class="stat-label">Wilgotność:</span> <b><span id="oH">--</span> %</b></p>
+                    <p><span class="stat-label">Ciśnienie atm.:</span> <b><span id="oP">--</span> hPa</b></p>
+                    <p><span class="timestamp-placeholder" id="otS">--</span></p>
+                    <p><span class="timestamp-placeholder">Bateria:</span> <b><span id="oBat">--</span> %</b></p>
+                </div>
+                <div class="data-block">
+                    <h3>DOM 🏠</h3>
+                    <p><span class="stat-label">Temperatura:</span> <b><span id="iT">--</span> °C</b></p>
+                    <p><span class="stat-label">Wilgotność:</span> <b><span id="iH">--</span> %</b></p>
+                    <p><span class="timestamp-placeholder" id="itS">--</span></p>
+                    <p><span class="timestamp-placeholder">Bateria:</span> <b><span id="iBat">--</span> %</b></p>
+                </div>
+            </div>
+        </div>
+        <h2 style="color: #cccccc; font-size:2em;">Dane historyczne:</h2>
+        <!-- Min/Max/Avg Stats for Temperature -->
+        <h3>Temperatura</h3>
+        <div class="stats-container">
+            <div class="stats-row">
+                <span class="location-label">OGRÓD 🪴</span>
+                <span class="stat-label">Min: </span><b><span id="outsideTempMin">--</span> °C</b> <span class="timestamp-placeholder" id="outsideTempMinTime">--</span>
+                <span class="stat-label">Max: </span><b><span id="outsideTempMax">--</span> °C</b> <span class="timestamp-placeholder" id="outsideTempMaxTime">--</span>
+                <span class="stat-label">Średnia: </span><b><span id="outsideTempAvg">--</span> °C</b>
+            </div>
+            <div class="stats-row">
+                <span class="location-label">DOM 🏠</span>
+                <span class="stat-label">Min: </span><b><span id="insideTempMin">--</span> °C</b> <span class="timestamp-placeholder" id="insideTempMinTime">--</span>
+                <span class="stat-label">Max: </span><b><span id="insideTempMax">--</span> °C</b> <span class="timestamp-placeholder" id="insideTempMaxTime">--</span>
+                <span class="stat-label">Średnia: </span><b><span id="insideTempAvg">--</span> °C</b>
+            </div>
+        </div>
+        <canvas id="tempChart"></canvas>
+
+        <!-- Min/Max/Avg Stats for Humidity -->
+        <h3>Wilgotność (rh)</h3>
+        <div class="stats-container">
+            <div class="stats-row">
+                <span class="location-label">OGRÓD 🪴</span>
+                <span class="stat-label">Min: </span><b><span id="outsideHumidityMin">--</span> %</b> <span class="timestamp-placeholder" id="outsideHumidityMinTime">--</span>
+                <span class="stat-label">Max: </span><b><span id="outsideHumidityMax">--</span> %</b> <span class="timestamp-placeholder" id="outsideHumidityMaxTime">--</span>
+                <span class="stat-label">Średnia: </span><b><span id="outsideHumidityAvg">--</span> %</b>
+            </div>
+            <div class="stats-row">
+                <span class="location-label">DOM 🏠</span>
+                <span class="stat-label">Min: </span><b><span id="insideHumidityMin">--</span> %</b> <span class="timestamp-placeholder" id="insideHumidityMinTime">--</span>
+                <span class="stat-label">Max: </span><b><span id="insideHumidityMax">--</span> %</b> <span class="timestamp-placeholder" id="insideHumidityMaxTime">--</span>
+                <span class="stat-label">Średnia: </span><b><span id="insideHumidityAvg">--</span> %</b>
+            </div>
+        </div>
+        <canvas id="humidityChart"></canvas>
+
+        <!-- Min/Max/Avg Stats for Pressure -->
+        <h3>Ciśnienie atmosferyczne</h3>
+        <div class="stats-container">
+            <div class="stats-row">
+                <span class="location-label">OGRÓD 🪴</span>
+                <span class="stat-label">Min: </span><b><span id="outsidePressureMin">--</span> hPa</b> <span class="timestamp-placeholder" id="outsidePressureMinTime">--</span>
+                <span class="stat-label">Max: </span><b><span id="outsidePressureMax">--</span> hPa</b> <span class="timestamp-placeholder" id="outsidePressureMaxTime">--</span>
+                <span class="stat-label">Średnia: </span><b><span id="outsidePressureAvg">--</span> hPa</b>
+            </div>
+        </div>
+        <canvas id="pressureChart"></canvas>
+
+        <div class="card" style="margin-top: 100px;">
+            <div class="card-header">
+                <h5 class="card-title">Pobierz Log (CSV)</h5>
+            </div>
+            <div class="card-body">
+                <div class="form-group">
+                    <label for="downloadSelect">Wybierz pliki do pobrania:</label>
+                    <select class="form-control" id="downloadSelect" style="margin-bottom: 20px;">
+                        <option value="inside_log.csv">Log wewnętrzny (CSV)</option>
+                        <option value="outside_log.csv">Log zewnętrzny (CSV)</option>
+                        <option value="all_inside">Wszystkie pliki wewnętrzne</option>
+                        <option value="all_outside">Wszystkie pliki zewnętrzne</option>
+                    </select>
+                </div>
+                <!-- Added margin-top to create space between selector and button -->
+                <button id="downloadButton" class="btn btn-primary" style="margin-top: 5px;">Pobierz</button>
+                <div class="card" style="margin-top: 50px;"></div>
+            </div>
+        </div>
+        
+    </div>
     <script>
         let tempChart, humidityChart, pressureChart;
-    
+        
+        function updateCurrentTime() {
+            let now = new Date();
+            let formattedDateTime = now.toLocaleDateString() + " " + now.toLocaleTimeString();
+            document.getElementById('currentTime').textContent = formattedDateTime;
+        }
+
         function fetchLatestReadings() {
             fetch('/latest')
                 .then(response => response.json())
                 .then(data => {
-                    document.getElementById('insideTemp').textContent = data.inside_temperature.toFixed(1);
-                    document.getElementById('outsideTemp').textContent = data.outside_temperature.toFixed(1);
-                    document.getElementById('insideHumidity').textContent = data.inside_humidity.toFixed(1);
-                    document.getElementById('outsideHumidity').textContent = data.outside_humidity.toFixed(1);
-                    document.getElementById('outsidePressure').textContent = data.outside_pressure.toFixed(0);
+                    document.getElementById('iT').textContent = data.iT.toFixed(1);
+                    document.getElementById('oT').textContent = data.oT.toFixed(1);
+                    document.getElementById('iH').textContent = data.iH.toFixed(1);
+                    document.getElementById('oH').textContent = data.oH.toFixed(1);
+                    document.getElementById('oP').textContent = data.oP.toFixed(1);
+                    document.getElementById('iBat').textContent = data.iBat;
+                    document.getElementById('oBat').textContent = data.oBat;
+                    if (data.itS) {
+                        document.getElementById('itS').textContent =
+                            `(${new Date(data.itS * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                    if (data.otS) {
+                        document.getElementById('otS').textContent =
+                            `(${new Date(data.otS * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                })
+                .catch(error => {
+                    console.error("Error fetching latest readings:", error);
                 });
         }
-    
-        function updateMinMax() {
-            let range = document.getElementById("timeRange").value;
+
+        function updateMinMaxAvg(customRangeValue) {
+            // Get the range from select element, or use the provided custom range if available
+            let range = customRangeValue || document.getElementById("globalRange").value;
+            
+            // If the range is "custom" but no customRangeValue was provided, use the stored data attribute
+            if (range === "custom" && !customRangeValue) {
+                range = document.getElementById("globalRange").getAttribute('data-custom-range') || "24h";
+            }
+            
             fetch(`/minmax?range=${range}`)
                 .then(response => response.json())
                 .then(data => {
-                    document.getElementById('insideTempMinMax').textContent = `${data.inside_temp_min.toFixed(1)} / ${data.inside_temp_max.toFixed(1)}`;
-                    document.getElementById('outsideTempMinMax').textContent = `${data.outside_temp_min.toFixed(1)} / ${data.outside_temp_max.toFixed(1)}`;
-                    document.getElementById('insideHumidityMinMax').textContent = `${data.inside_humidity_min.toFixed(1)} / ${data.inside_humidity_max.toFixed(1)}`;
-                    document.getElementById('outsideHumidityMinMax').textContent = `${data.outside_humidity_min.toFixed(1)} / ${data.outside_humidity_max.toFixed(1)}`;
-                    document.getElementById('outsidePressureMinMax').textContent = `${data.outside_pressure_min.toFixed(0)} / ${data.outside_pressure_max.toFixed(0)}`;
+                    // Update Temperature stats
+                    document.getElementById('insideTempMin').textContent = parseFloat(data.inside_temp_min.toFixed(1));
+                    document.getElementById('insideTempMax').textContent = parseFloat(data.inside_temp_max.toFixed(1));
+                    document.getElementById('insideTempAvg').textContent = parseFloat(data.inside_temp_avg.toFixed(1));
+                    
+                    document.getElementById('outsideTempMin').textContent = parseFloat(data.outside_temp_min.toFixed(1));
+                    document.getElementById('outsideTempMax').textContent = parseFloat(data.outside_temp_max.toFixed(1));
+                    document.getElementById('outsideTempAvg').textContent = parseFloat(data.outside_temp_avg.toFixed(2));
+                    
+                    // Update time stamps if available in the response
+                    if (data.inside_temp_min_time) {
+                        document.getElementById('insideTempMinTime').textContent =
+                            `(${new Date(data.inside_temp_min_time * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                    if (data.inside_temp_max_time) {
+                        document.getElementById('insideTempMaxTime').textContent = 
+                            `(${new Date(data.inside_temp_max_time * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                    if (data.outside_temp_min_time) {
+                        document.getElementById('outsideTempMinTime').textContent = 
+                            `(${new Date(data.outside_temp_min_time * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                    if (data.outside_temp_max_time) {
+                        document.getElementById('outsideTempMaxTime').textContent = 
+                            `(${new Date(data.outside_temp_max_time * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                    
+                    // Update Humidity stats
+                    document.getElementById('insideHumidityMin').textContent = parseFloat(data.inside_humidity_min.toFixed(1));
+                    document.getElementById('insideHumidityMax').textContent = parseFloat(data.inside_humidity_max.toFixed(1));
+                    document.getElementById('insideHumidityAvg').textContent = parseFloat(data.inside_humidity_avg.toFixed(2));
+                    
+                    document.getElementById('outsideHumidityMin').textContent = parseFloat(data.outside_humidity_min.toFixed(1));
+                    document.getElementById('outsideHumidityMax').textContent = parseFloat(data.outside_humidity_max.toFixed(1));
+                    document.getElementById('outsideHumidityAvg').textContent = parseFloat(data.outside_humidity_avg.toFixed(2));
+                    
+                    // Update humidity time stamps if available
+                    if (data.inside_humidity_min_time) {
+                        document.getElementById('insideHumidityMinTime').textContent = 
+                            `(${new Date(data.inside_humidity_min_time * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                    if (data.inside_humidity_max_time) {
+                        document.getElementById('insideHumidityMaxTime').textContent = 
+                            `(${new Date(data.inside_humidity_max_time * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                    if (data.outside_humidity_min_time) {
+                        document.getElementById('outsideHumidityMinTime').textContent = 
+                            `(${new Date(data.outside_humidity_min_time * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                    if (data.outside_humidity_max_time) {
+                        document.getElementById('outsideHumidityMaxTime').textContent = 
+                            `(${new Date(data.outside_humidity_max_time * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                    
+                    // Update Pressure stats
+                    document.getElementById('outsidePressureMin').textContent = parseFloat(data.outside_pressure_min.toFixed(1));
+                    document.getElementById('outsidePressureMax').textContent = parseFloat(data.outside_pressure_max.toFixed(1));
+                    document.getElementById('outsidePressureAvg').textContent = parseFloat(data.outside_pressure_avg.toFixed(2));
+                    
+                    // Update pressure time stamps if available
+                    if (data.outside_pressure_min_time) {
+                        document.getElementById('outsidePressureMinTime').textContent = 
+                            `(${new Date(data.outside_pressure_min_time * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                    if (data.outside_pressure_max_time) {
+                        document.getElementById('outsidePressureMaxTime').textContent = 
+                            `(${new Date(data.outside_pressure_max_time * 1000).toLocaleString(undefined, {
+                                dateStyle: 'short',
+                                timeStyle: 'short'
+                            })})`;
+                    }
+                })
+                .catch(error => {
+                    console.error("Error fetching min/max data:", error);
                 });
         }
-    
-        function fetchGraphData() {
-            let range = document.getElementById("graphRange").value;
+
+        function updateCustomRange() {
+                let start = document.getElementById("startDate").value;
+                let end = document.getElementById("endDate").value;
+
+                if (!start || !end) {
+                    alert("Please select both start and end dates.");
+                    return;
+                }
+
+                let startTimestamp = Math.floor(new Date(start).getTime() / 1000);
+                let endTimestamp = Math.floor(new Date(end).getTime() / 1000);
+
+                if (startTimestamp >= endTimestamp) {
+                    alert("Start date must be before end date.");
+                    return;
+                }
+
+                let customRange = `custom_${startTimestamp}_${endTimestamp}`;
+
+                // Set the value of the select element
+                let rangeSelector = document.getElementById("globalRange");
+                rangeSelector.value = "custom"; // Make sure the dropdown still shows "Custom Date Range"
+                
+                // Store the custom range in a data attribute
+                rangeSelector.setAttribute('data-custom-range', customRange);
+                
+                console.log(`[DEBUG] Custom range selected: ${customRange}`);
+
+                // Call updateAllData only once with the custom range
+                updateAllData(customRange);
+            }
+
+                function fetchGraphData(customRangeValue) {
+            // Get the range from select element, or use the provided custom range if available
+            let range = customRangeValue || document.getElementById("globalRange").value;
+            
+            // If the range is "custom" but no customRangeValue was provided, use the stored data attribute
+            if (range === "custom" && !customRangeValue) {
+                range = document.getElementById("globalRange").getAttribute('data-custom-range') || "24h";
+            }
+            
+            console.log("Fetching chart data for range:", range);
+
+            // Add a flag to prevent multiple simultaneous fetches
+            if (window.fetchingGraphData) {
+                console.log("Already fetching graph data, request queued");
+                window.pendingFetch = true;
+                return;
+            }
+            
+            window.fetchingGraphData = true;
+
             fetch(`/chart-data?range=${range}`)
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) throw new Error("Failed to fetch chart data");
+                    return response.json();
+                })
                 .then(data => {
-                    updateCharts(data);
+                    console.log("Received chart data:", data);
+                    updateCharts(data.inside, data.outside);
+                    window.fetchingGraphData = false;
+                    
+                    // Handle any pending fetch requests
+                    if (window.pendingFetch) {
+                        window.pendingFetch = false;
+                        // Only refetch if the range changed during the previous fetch
+                        const currentRange = document.getElementById("globalRange").value === "custom" ? 
+                            document.getElementById("globalRange").getAttribute('data-custom-range') : 
+                            document.getElementById("globalRange").value;
+                        
+                        if (currentRange !== range) {
+                            console.log("Processing queued fetch with updated range");
+                            fetchGraphData();
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error("Error fetching chart data:", error);
+                    window.fetchingGraphData = false;
                 });
         }
-    
-        function updateCharts(data) {
-            const insideData = data.filter(entry => entry.inside_temperature !== undefined);
-            const outsideData = data.filter(entry => entry.outside_temperature !== undefined);
-    
-            const mergedTimestamps = [...new Set([...insideData.map(e => e.timestamp), ...outsideData.map(e => e.timestamp)])].sort((a, b) => a - b);
-            
-            const insideTempAligned = mergedTimestamps.map(t => {
-                const entry = insideData.find(e => e.timestamp === t);
-                return entry ? entry.inside_temperature : null;
+
+        function updateCharts(insideData, outsideData) {
+            console.log("Updating charts...");
+            console.log("[DEBUG] Inside Data:", insideData);
+            console.log("[DEBUG] Outside Data:", outsideData);
+
+            if ((!insideData || insideData.length === 0) && (!outsideData || outsideData.length === 0)) {
+                console.warn("[WARNING] No data available for this range.");
+                return;
+            }
+
+            // Extract timestamps from both datasets and merge them uniquely
+            const mergedTimestamps = [...new Set([
+                ...insideData.map(entry => entry.tS),
+                ...outsideData.map(entry => entry.tS)
+            ])].sort((a, b) => a - b);
+            console.log("[DEBUG] Merged timestamps:", mergedTimestamps);
+
+            // Align data with merged timestamps
+            const insideTemp = mergedTimestamps.map(t => {
+                const entry = insideData.find(e => e.tS === t);
+                return entry ? entry.T : null;
             });
-            
-            const outsideTempAligned = mergedTimestamps.map(t => {
-                const entry = outsideData.find(e => e.timestamp === t);
-                return entry ? entry.outside_temperature : null;
+
+            const outsideTemp = mergedTimestamps.map(t => {
+                const entry = outsideData.find(e => e.tS === t);
+                return entry ? entry.T : null;
             });
-    
-            const insideHumidityAligned = mergedTimestamps.map(t => {
-                const entry = insideData.find(e => e.timestamp === t);
-                return entry ? entry.inside_humidity : null;
+
+            const insideHumidity = mergedTimestamps.map(t => {
+                const entry = insideData.find(e => e.tS === t);
+                return entry ? entry.H : null;
             });
-    
-            const outsideHumidityAligned = mergedTimestamps.map(t => {
-                const entry = outsideData.find(e => e.timestamp === t);
-                return entry ? entry.outside_humidity : null;
+
+            const outsideHumidity = mergedTimestamps.map(t => {
+                const entry = outsideData.find(e => e.tS === t);
+                return entry ? entry.H : null;
             });
-    
-            const outsidePressureAligned = mergedTimestamps.map(t => {
-                const entry = outsideData.find(e => e.timestamp === t);
-                return entry ? entry.outside_pressure : null;
+
+            const outsidePressure = mergedTimestamps.map(t => {
+                const entry = outsideData.find(e => e.tS === t);
+                return entry ? entry.P : null;
             });
-    
+
+            // Convert timestamps to readable format
+            const labels = mergedTimestamps.map(t => new Date(t * 1000).toLocaleString());
+            console.log("[DEBUG] Labels:", labels);
+
+            // Update Temperature Chart
             if (!tempChart) {
-                const ctxTemp = document.getElementById("tempChart").getContext("2d");
-                tempChart = new Chart(ctxTemp, {
+                tempChart = new Chart(document.getElementById("tempChart").getContext("2d"), {
                     type: "line",
                     data: {
-                        labels: mergedTimestamps.map(t => new Date(t * 1000).toLocaleString()),
+                        labels: labels,
                         datasets: [
-                            {
-                                label: "Inside Temp",
-                                data: insideTempAligned,
-                                borderColor: "rgba(255, 135, 0, 1)",
-                                backgroundColor: "rgba(255, 99, 132, 0.2)",
-                                yAxisID: 'y',
-                                spanGaps: true
-                            },
-                            {
-                                label: "Outside Temp",
-                                data: outsideTempAligned,
-                                borderColor: "rgba(255, 0, 0, 1)",
-                                backgroundColor: "rgba(255, 0, 0, 0.2)",
-                                yAxisID: 'y',
-                                spanGaps: true
-                            }
+                            { label: "Temperatura DOM", data: insideTemp, borderColor: "orange", spanGaps: true },
+                            { label: "Temperatura OGRÓD", data: outsideTemp, borderColor: "red", spanGaps: true }
                         ]
                     },
                     options: {
@@ -180,42 +484,30 @@
                         scales: {
                             x: {
                                 type: "category",
-                                title: { display: true, text: "Time" }
+                                title: { display: true, text: "Czas" } // LOCALIZATION
                             },
                             y: {
-                                title: { display: true, text: "Temperature (°C)" }
+                                title: { display: true, text: "Temperatura (°C)" } // LOCALIZATION
                             }
                         }
                     }
                 });
             } else {
-                tempChart.data.labels = mergedTimestamps.map(t => new Date(t * 1000).toLocaleString());
-                tempChart.data.datasets[0].data = insideTempAligned;
-                tempChart.data.datasets[1].data = outsideTempAligned;
+                tempChart.data.labels = labels;
+                tempChart.data.datasets[0].data = insideTemp;
+                tempChart.data.datasets[1].data = outsideTemp;
                 tempChart.update();
             }
-    
+
+            // 🔹 Update Humidity Chart
             if (!humidityChart) {
-                const ctxHumidity = document.getElementById("humidityChart").getContext("2d");
-                humidityChart = new Chart(ctxHumidity, {
+                humidityChart = new Chart(document.getElementById("humidityChart").getContext("2d"), {
                     type: "line",
                     data: {
-                        labels: mergedTimestamps.map(t => new Date(t * 1000).toLocaleString()),
+                        labels: labels,
                         datasets: [
-                            {
-                                label: "Inside Humidity",
-                                data: insideHumidityAligned,
-                                borderColor: "rgba(136, 249, 248, 1)",
-                                backgroundColor: "rgba(54, 162, 235, 0.2)",
-                                spanGaps: true
-                            },
-                            {
-                                label: "Outside Humidity",
-                                data: outsideHumidityAligned,
-                                borderColor: "rgba(54, 162, 235, 1)",
-                                backgroundColor: "rgba(75, 192, 192, 0.2)",
-                                spanGaps: true
-                            }
+                            { label: "Wilgotność DOM", data: insideHumidity, borderColor: "cyan", spanGaps: true },
+                            { label: "Wilgotność OGRÓD", data: outsideHumidity, borderColor: "blue", spanGaps: true }
                         ]
                     },
                     options: {
@@ -223,35 +515,29 @@
                         scales: {
                             x: {
                                 type: "category",
-                                title: { display: true, text: "Time" }
+                                title: { display: true, text: "Czas" } // LOCALIZATION
                             },
                             y: {
-                                title: { display: true, text: "Humidity (%)" }
+                                title: { display: true, text: "Wilgotność (%)" } // LOCALIZATION
                             }
                         }
                     }
                 });
             } else {
-                humidityChart.data.labels = mergedTimestamps.map(t => new Date(t * 1000).toLocaleString());
-                humidityChart.data.datasets[0].data = insideHumidityAligned;
-                humidityChart.data.datasets[1].data = outsideHumidityAligned;
+                humidityChart.data.labels = labels;
+                humidityChart.data.datasets[0].data = insideHumidity;
+                humidityChart.data.datasets[1].data = outsideHumidity;
                 humidityChart.update();
             }
-    
+
+            // 🔹 Update Pressure Chart (Only Outside Data)
             if (!pressureChart) {
-                const ctxPressure = document.getElementById("pressureChart").getContext("2d");
-                pressureChart = new Chart(ctxPressure, {
+                pressureChart = new Chart(document.getElementById("pressureChart").getContext("2d"), {
                     type: "line",
                     data: {
-                        labels: mergedTimestamps.map(t => new Date(t * 1000).toLocaleString()),
+                        labels: labels,
                         datasets: [
-                            {
-                                label: "Outside Pressure",
-                                data: outsidePressureAligned,
-                                borderColor: "rgba(153, 102, 255, 1)",
-                                backgroundColor: "rgba(153, 102, 255, 0.2)",
-                                spanGaps: true
-                            }
+                            { label: "Ciśnienie OGRÓD", data: outsidePressure, borderColor: "purple", spanGaps: true } // LOCALIZATION
                         ]
                     },
                     options: {
@@ -259,32 +545,123 @@
                         scales: {
                             x: {
                                 type: "category",
-                                title: { display: true, text: "Time" }
+                                title: { display: true, text: "Czas" } // LOCALIZATION
                             },
                             y: {
-                                title: { display: true, text: "Pressure (hPa)" }
+                                title: { display: true, text: "Ciśnienie (hPa)" } // LOCALIZATION
                             }
                         }
                     }
                 });
             } else {
-                pressureChart.data.labels = mergedTimestamps.map(t => new Date(t * 1000).toLocaleString());
-                pressureChart.data.datasets[0].data = outsidePressureAligned;
+                pressureChart.data.labels = labels;
+                pressureChart.data.datasets[0].data = outsidePressure;
                 pressureChart.update();
             }
         }
-    
-        function downloadCSV(type) {
-            let range = document.getElementById("range").value;
-            window.location.href = `/download?type=${type}&range=${range}`;
+
+        function updateAllData(customRangeValue) {
+            // Add a debounce to prevent multiple rapid calls
+            if (window.updateAllDataTimeout) {
+                clearTimeout(window.updateAllDataTimeout);
+            }
+            
+            window.updateAllDataTimeout = setTimeout(() => {
+                updateMinMaxAvg(customRangeValue);
+                fetchGraphData(customRangeValue);
+            }, 50); // Small delay to combine multiple rapid calls
         }
-    
+
+        // Add event listener for the download button
+        document.getElementById('downloadButton').addEventListener('click', function() {
+            const selection = document.getElementById('downloadSelect').value;
+            
+            // Get the range from global range selector
+            let range = document.getElementById("globalRange").value;
+            
+            // If using custom range, get the stored range value
+            if (range === "custom") {
+                range = document.getElementById("globalRange").getAttribute('data-custom-range') || "24h";
+            }
+            
+            if (selection === 'inside_log.csv' || selection === 'outside_log.csv') {
+                // Single file download with range parameter
+                window.location.href = `/download?file=${selection}&range=${range}`;
+            } else if (selection === 'all_inside' || selection === 'all_outside') {
+                // Multiple files download (as ZIP)
+                window.location.href = `/download-multiple?pattern=${selection}`;
+            }
+        });
+
+        function loadAvailableFiles() {
+            fetch('/list-files')
+                .then(response => response.json())
+                .then(data => {
+                    const select = document.getElementById('downloadSelect');
+                    
+                    // Clear existing options
+                    select.innerHTML = '';
+                    
+                    // Add static options in Polish
+                    select.add(new Option('Log wewnętrzny (CSV)', 'inside_log.csv'));
+                    select.add(new Option('Log zewnętrzny (CSV)', 'outside_log.csv'));
+                    select.add(new Option('Wszystkie pliki wewnętrzne', 'all_inside'));
+                    select.add(new Option('Wszystkie pliki zewnętrzne', 'all_outside'));
+                    
+                    // Optionally add individual files from the response
+                    data.files.forEach(file => {
+                        select.add(new Option(file, file));
+                     });
+                })
+                .catch(error => console.error('Błąd ładowania plików:', error));
+        }
+        
+
         document.addEventListener("DOMContentLoaded", () => {
+            updateCurrentTime();
             fetchLatestReadings();
-            updateMinMax();
-            fetchGraphData();
+            updateAllData();
+            
+            // Set intervals for updates
             setInterval(fetchLatestReadings, 900000);
-            setInterval(fetchGraphData, 900000);
+            setInterval(updateCurrentTime, 1000);
+
+            // Range selector event listener
+            let rangeSelector = document.getElementById("globalRange");
+            let customDateSelectors = document.getElementById("customDateSelectors");
+
+            rangeSelector.addEventListener("change", function () {
+                if (this.value === "custom") {
+                    customDateSelectors.style.display = "block";
+                } else {
+                    customDateSelectors.style.display = "none";
+                    updateAllData();
+                }
+            });
+            
+            // Initialize the download button
+            document.getElementById('downloadButton').addEventListener('click', function() {
+                const selection = document.getElementById('downloadSelect').value;
+                
+                // Get the range from global range selector
+                let range = document.getElementById("globalRange").value;
+                
+                // If using custom range, get the stored range value
+                if (range === "custom") {
+                    range = document.getElementById("globalRange").getAttribute('data-custom-range') || "24h";
+                }
+                
+                if (selection === 'inside_log.csv' || selection === 'outside_log.csv') {
+                    // Single file download with range parameter
+                    window.location.href = `/download?file=${selection}&range=${range}`;
+                } else if (selection === 'all_inside' || selection === 'all_outside') {
+                    // Multiple files download (as ZIP)
+                    window.location.href = `/download-multiple?pattern=${selection}`;
+                }
+            });
+            
+            
+            loadAvailableFiles();
         });
     </script>
 </body>

@@ -1,19 +1,19 @@
 {
 	"WLAN": {
-		"ssid": "Your wifi ssid",
-		"password": "Your wifi password"
+		"ssid": "caladan",
+		"password": "ELteide_2019"
 	},
 	"OpenWeather": {
-		"apikey": "Your Open Weather key",
+		"apikey": "207b3fa36cbf41e1c2bd2530f436f0c9",
 		"server": "api.openweathermap.org",
-		"country": "CN",
-		"city": "shenzhen",
+		"country": "PL",
+		"city": "Gdansk",
 		"hemisphere": "north",
 		"units": "M"
 	},
 	"ntp": {
-		"server": "0.asia.pool.ntp.org",
-		"timezone": ""
+		"server": "pool.ntp.org",
+		"timezone": "CET-1CEST,M3.5.0,M10.5.0/3"
 	},
 	"schedule_power": {
 		"on_time": "17:42",

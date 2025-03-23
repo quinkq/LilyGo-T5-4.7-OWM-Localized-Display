@@ -1,5 +1,4 @@
 // ESP32 Weather Display and a LilyGo EPD 4.7" Display, obtains Open Weather Map data, decodes and then displays it.
-// This software, the ideas and concepts is Copyright (c) David Bird 2021. All rights to this software are reserved.
 // #################################################################################################################
 
 #include <Arduino.h>           // In-built
@@ -34,7 +33,7 @@
 #include <SD.h>
 #include <logWebServer.h>
 
-//Power saving
+// Power saving
 #include "esp_pm.h"
 #include "driver/rtc_io.h"
 #include "driver/adc.h"
@@ -44,13 +43,6 @@
 #define USR_BUTTON GPIO_NUM_10
 #define I2C_MASTER_SDA GPIO_NUM_17
 #define I2C_MASTER_SCL GPIO_NUM_18
-// Define SD card pins for LilyGo T5 4.7
-/*
-#define SD_CS GPIO_NUM_42
-#define SD_SCLK GPIO_NUM_11
-#define SD_MOSI GPIO_NUM_15
-#define SD_MISO GPIO_NUM_16
-*/
 #elif CONFIG_IDF_TARGET_ESP32
 #define USR_BUTTON GPIO_NUM_21
 #elif CONFIG_IDF_TARGET_ESP32S3
@@ -63,16 +55,31 @@
 #define MINUTES_TO_TICKS(minutes) pdMS_TO_TICKS((minutes) * 60 * 1000) // converting minutes to seconds and then miliseconds
 
 //################  VERSION  ##################################################
-String version = "2.5 / 4.7in"; // Programme version, see change log at end
+String version = "2.5 / 4.7in"; // Programme version
 
 //################ PROGRAM VARIABLES and OBJECTS ##############################
+
+// Semaphore handles
+SemaphoreHandle_t configSemaphore;
+SemaphoreHandle_t idleEndedSem;
+SemaphoreHandle_t ButtonWakeSem;
+SemaphoreHandle_t ESPNowWakeSem;
+SemaphoreHandle_t dataExhangeCompleteSem;
+SemaphoreHandle_t sht4xTriggerSem;
+SemaphoreHandle_t sht4xCompleteSem;
+
+// Queue handles
+QueueHandle_t sensorDataQueue;
+QueueHandle_t renderDataQueue;
+QueueHandle_t csvLogQueue;
+QueueSetHandle_t queueSet = xQueueCreateSet(2); 
 
 String Time_str = "--:--:--";
 String Date_str = "-- --- ----";
 
-#define max_readings 8 // (WAS 24!) Limited to 3-days here, but could go to 5-days = 40
+#define max_readings 8 // (was 24!) Limited to 1-day here, but could go to 5-days = 40
 
-//RTC_DATA_ATTR
+//RTC_DATA_ATTR - storing in RTC memory for deel sleeps
 RTC_DATA_ATTR int screenState = 0; // default screen state
 
 Forecast_record_type WxConditions[1];
@@ -84,64 +91,42 @@ float humidity_readings[max_readings]    = {0};
 float rain_readings[max_readings]        = {0};
 float snow_readings[max_readings]        = {0};
 
-// obsolete - now calculated in Idle task //const int SleepDuration = 2; // Sleep time in minutes, aligned to the nearest minute boundary, so if 30 will always update at 00 or 30 past the hour
+// (obsolete - now calculated in Idle task) const int SleepDuration = 2; // Sleep time in minutes, aligned to the nearest minute boundary, so if 30 will always update at 00 or 30 past the hour
 bool SleepHoursEnabled = false;
 bool DeepSleepEnabled = false;
 int WakeupHour    = 5;  // Don't wakeup until after 07:00 to save battery power
 int SleepHour     = 1; // Sleep after 23:00 to save battery power
-long StartTime     = 0;
-long SleepTimer    = 0;
-// obsolete //long Delta         = 30; // ESP32 rtc speed compensation, prevents display at xx:59:yy and then xx:00:yy (one minute later) to save power
+long StartTime    = 0;
+long SleepTimer   = 0;
+// obsolete long Delta         = 30; // ESP32 rtc speed compensation, prevents display at xx:59:yy and then xx:00:yy (one minute later) to save power
 
 uint64_t IdleStartTime = 0;
 bool skipOWMUpdate = false;
 
-// Semaphore handles
-SemaphoreHandle_t configSemaphore;
-SemaphoreHandle_t idleEndedSem;
-SemaphoreHandle_t ButtonWakeSem;
-SemaphoreHandle_t ESPNowWakeSem;
-SemaphoreHandle_t dataExhangeCompleteSem;
-SemaphoreHandle_t sht4xTriggerSem;
-SemaphoreHandle_t sht4xCompleteSem;
-SemaphoreHandle_t i2cMutex;
-
-// Queue handles
-QueueHandle_t sensorDataQueue;
-QueueHandle_t logQueue;
-QueueSetHandle_t queueSet = xQueueCreateSet(2);
-
-// Global variables for sensor readings
-typedef struct {
-    float temperature;
-    float humidity;
-    float pressure;
-    int32_t timestamp;
-} SensorData;
-
-SensorData localData = {0};
-SensorData receivedData = {0};
+// Battery variables - storing and rendering
+float voltageWS;
+uint8_t batteryPercentageWS = 100;
 
 // WiFi / ESP-NOW transmission settings
-uint8_t receiverMac[] = {0x84, 0xF7, 0x03, 0x3A, 0xA8, 0x58};
+uint8_t receiverMac[] = {0x84, 0xF7, 0x03, 0x3A, 0xA8, 0x58}; // set MAC adress of ESP you'll be exchanging data with
 bool dataReceivedFlag = false;
 bool timeIsSet = false;
 int WiFiStatus = WL_DISCONNECTED;
 
-// Web logserver
-#define MAX_ENTRIES 100000
-
-File insideFile, outsideFile;
-
-// Struct for storing sensor data in the queue
 typedef struct {
-    int32_t timestamp;
     float temperature;
     float humidity;
     float pressure;
-    char filename[20];  // Name of the file to store data
-} SensorLogEntry;
+    int32_t timestamp;
+    uint8_t batPercentage;
+} SensorESPNOWData;
 
+// Global variables for SD Card handling
+#define MAX_ENTRIES 50000 // CSV single file logging limit
+bool sdCardInitialized = false;
+const int MAX_SD_INIT_RETRIES = 3;
+unsigned long lastSDRetryTime = 0;
+const unsigned long SD_RETRY_INTERVAL = 5000; // 5 seconds between retry attempts
 
 
 //################ ISR ##################################################
@@ -161,123 +146,206 @@ void IRAM_ATTR ButtonISR()
     }
 }
 
+// Global variables to track last ESP-NOW reception time
+int64_t lastESPNowReceiveTime = 0;
+const int ESPNowIgnorePeriod = 45 * 1000000; // 30s in microseconds
+
 // ESP-NOW Callback Function
-void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) 
+void OnDataRecv(const uint8_t *mac, const uint8_t *transmissionData, int len)
 {
     ESP_LOGI("ESP-NOW", "ESP-NOW - packet received");
-
-    // Verify and ignore false interrupt triggers
-    if (len == 0 || incomingData == NULL)
+    
+    // Filter out false interrupt triggers
+    if (transmissionData == NULL || len == 0)
     {
         ESP_LOGW("ESP-NOW", "WARNING: Received empty or invalid ESP-NOW packet, ignoring.");
         return;
     }
-    else
+
+    // Check if we're within the ignore period (received packet too soon)
+    int64_t currentTime = esp_timer_get_time();
+    if (currentTime - lastESPNowReceiveTime < ESPNowIgnorePeriod)
     {
-        ESP_LOGI("ESP-NOW", "Packet valid, breaking the idle.");
-        xSemaphoreGiveFromISR(ESPNowWakeSem, NULL); // Wake up from ESP-NOW
-        memcpy(&receivedData, incomingData, sizeof(SensorData));
-        queueLogData("/outside_log.csv", receivedData.temperature, receivedData.humidity, receivedData.pressure, receivedData.timestamp);
-        ESP_LOGI("ESP-NOW", "Received ESP-NOW Data: Temp: %.2f, Humidity: %.1f, Pressure: %.1f", receivedData.temperature, receivedData.humidity, receivedData.pressure);
-        dataReceivedFlag = true;
-
-        // Send the most recent NTP time back to ESP32-C3
-        struct tm timeinfo;
-        getLocalTime(&timeinfo);
-        SensorData responseData = {0};
-        Serial.printf("Time sent: %s\n", asctime(&timeinfo));
-        responseData.timestamp = (int32_t) time(NULL);
-
-        // Verify time correctness and as an respose send it for ntp update
-        if (responseData.timestamp < 1700000000)
-        {
-            ESP_LOGE("ESP-NOW", "ERROR: Received invalid timestamp! Aborting sending.");
-            xSemaphoreGiveFromISR(dataExhangeCompleteSem, NULL);
-            return;
-        }
-        else
-        {
-            ESP_LOGI("ESP-NOW", "Sending sensor data...");
-            esp_err_t result = esp_now_send(receiverMac, (uint8_t *)&responseData, sizeof(SensorData));
-            if (result == ESP_OK) 
-            {
-                ESP_LOGI("ESP-NOW", "Successfully sent NTP timestamp: %" PRId32, responseData.timestamp);
-            }
-
-            xSemaphoreGiveFromISR(dataExhangeCompleteSem, NULL);    
-        }
-    }
-}
-
-//################ FUNCTIONS ##################################################
-
-void setupSDCard() 
-{
-    Serial.println("Initializing SD card...");
-    if (!SD.begin(SD_CS, SPI)) {
-        Serial.println("SD Card initialization failed!");
+        ESP_LOGW("ESP-NOW", "ESP-NOW packet received less than 45s ago, Ignoring.");
         return;
     }
+    lastESPNowReceiveTime = currentTime; // Update last receive time
+   
+    // Process the packet
+    SensorESPNOWData espnowTEMPData;
+    memcpy(&espnowTEMPData, transmissionData, sizeof(SensorESPNOWData));
+    SensorData espnowData = {espnowTEMPData.timestamp,
+                             espnowTEMPData.temperature, 
+                             espnowTEMPData.humidity, 
+                             espnowTEMPData.pressure, 
+                             "/outside_log.csv", 
+                             espnowTEMPData.batPercentage};
+
+    if (xQueueSendFromISR(sensorDataQueue, &espnowData, NULL) != pdTRUE) {
+        ESP_LOGE("ESP-NOW", "ERROR: sensorDataQueue is full! Data lost!!!");
+    }
+
+    // As response send the most recent NTP time back to ESP32-C3
+    int32_t responseTimestamp = (int32_t) time(NULL);
+    if (responseTimestamp < 1700000000) // Verify time correctness and as an response send it for ntp update
+    {
+        ESP_LOGW("ESP-NOW", "Acquired invalid timestamp! Sending timestamp response canceled.");
+    }
+    else
+    {
+        esp_err_t result = esp_now_send(receiverMac, (uint8_t *)&responseTimestamp, sizeof(responseTimestamp));
+        if (result == ESP_OK)
+        {
+            ESP_LOGI("ESP-NOW", "Successfully sent NTP timestamp: %" PRId32, responseTimestamp);
+        }
+           
+    }
+    xSemaphoreGiveFromISR(dataExhangeCompleteSem, NULL);
+}
+
+//################## System functions ##################
+//###################### SD CARD ####################### 
+
+bool initializeSDCard() {
+    Serial.println("Initializing SD card...");
+    
+    if (!SD.begin(SD_CS, SPI)) {
+        Serial.println("SD Card initialization failed!");
+        return false;
+    }
+    
     delay(500); // Allow time for SD to stabilize
+    
+    // Verify card size to ensure proper initialization
     uint64_t cardSize = SD.cardSize();
     if (cardSize == 0) {
         Serial.println("Error: SD Card size not detected correctly!");
+        return false;
     } else {
         Serial.printf("SD Card initialized. Size: %.2f GB\n", cardSize / 1024.0 / 1024.0 / 1024.0);
+        return true;
     }
 }
 
-// Maintaining circular buffer by limiting entries to 100000
-void maintainCircularBuffer(const char *filename) {
-    File file = SD.open(filename, FILE_READ);
-    if (!file) {
-        Serial.printf("Failed to open %s for buffer check!\n", filename);
+// Enhanced setup function with initial SD card initialization
+void setupSDCard() {
+    sdCardInitialized = initializeSDCard();
+    
+    if (!sdCardInitialized) {
+        Serial.println("WARNING: System starting without SD card functionality!");
+    }
+}
+
+// Function to check SD card health and attempt reinit if needed
+bool checkAndReinitSDCard() {
+    // If already initialized, do a quick check
+    if (sdCardInitialized) {
+        // Simple test - try to open the root directory
+        File root = SD.open("/");
+        if (!root || !root.isDirectory()) {
+            // SD card issue detected
+            Serial.println("SD card disconnected or failed during operation!");
+            sdCardInitialized = false;
+            if (root) root.close();
+        } else {
+            root.close();
+            return true; // Card is working fine
+        }
+    }
+    
+    // Only attempt reinitialization if enough time has passed since last attempt
+    unsigned long currentTime = millis();
+    if (!sdCardInitialized && (currentTime - lastSDRetryTime >= SD_RETRY_INTERVAL)) {
+        Serial.println("Attempting to reinitialize SD card...");
+        
+        // Try to end current session before reinitializing
+        SD.end();
+        delay(100);
+        
+        // Attempt to reinitialize
+        for (int retry = 0; retry < MAX_SD_INIT_RETRIES; retry++) {
+            if (initializeSDCard()) {
+                sdCardInitialized = true;
+                Serial.println("SD card successfully reinitialized!");
+                break;
+            }
+            Serial.printf("Reinit attempt %d failed, retrying...\n", retry + 1);
+            delay(500); // Short delay between retry attempts
+        }
+        
+        lastSDRetryTime = currentTime; // Update the last retry time
+    }
+    
+    return sdCardInitialized;
+}
+
+// Rotating/archiving files over 50000 entries - MAX_ENTRIES
+void rotateLogFile(const char *filename) {
+    // First check if file exists
+    if (!SD.exists(filename)) {
+        Serial.printf("File %s doesn't exist yet, no rotation needed\n", filename);
         return;
     }
-
+    
+    // Open the file to count lines
+    File file = SD.open(filename, FILE_READ);
+    if (!file) {
+        Serial.printf("Failed to open %s for line counting!\n", filename);
+        return;
+    }
+    
     // Count lines
     int lineCount = 0;
     while (file.available()) {
-        file.readStringUntil('\n'); // Read each line
+        file.readStringUntil('\n');
         lineCount++;
     }
     file.close();
-
-    // If we exceed max entries, remove the oldest
-    if (lineCount > MAX_ENTRIES) {
-        Serial.printf("Trimming %s: Found %d entries, keeping last %d\n", filename, lineCount, MAX_ENTRIES);
-
-        File tempFile = SD.open("/temp.csv", FILE_WRITE);
-        file = SD.open(filename, FILE_READ);
-        for (int i = lineCount - MAX_ENTRIES; i > 0; i--) {
-            file.readStringUntil('\n'); // Skip older lines
-        }
-
-        // Copy only the latest 365 entries
-        while (file.available()) {
-            tempFile.println(file.readStringUntil('\n'));
-        }
-
-        file.close();
-        tempFile.close();
-        SD.remove(filename);             // Delete old file
-        SD.rename("/temp.csv", filename); // Replace with trimmed file
+    
+    Serial.printf("File %s has %d entries\n", filename, lineCount);
+    
+    // If under threshold, no rotation needed
+    if (lineCount <= MAX_ENTRIES) {
+        return;
     }
-}
-
-// Queing most recent sensor data for logging
-void queueLogData(const char *filename, float temperature, float humidity, float pressure, int32_t timestamp) 
-{
-    SensorLogEntry logEntry;
-    logEntry.temperature = temperature;
-    logEntry.humidity = humidity;
-    logEntry.pressure = pressure;
-    logEntry.timestamp = timestamp;
-    strncpy(logEntry.filename, filename, sizeof(logEntry.filename) - 1);
-
-    if (xQueueSend(logQueue, &logEntry, portMAX_DELAY) != pdTRUE) {
-        Serial.println("Log queue is full! Data lost.");
+    
+    // Create backup filename with date
+    char backupFilename[50];
+    // Get current date from RTC or system
+    // Format: bacMMDDYY.filename
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    
+    // Extract just the basename from path
+    const char *baseFilename = strrchr(filename, '/');
+    if (baseFilename != NULL) {
+        baseFilename++; // Skip the '/' character
+    } else {
+        baseFilename = filename; // No directory in path
     }
+    
+    // Format backup filename with date prefix
+    snprintf(backupFilename, sizeof(backupFilename), "/bac%02d%02d%02d.%s", 
+             timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_year % 100, baseFilename);
+    
+    Serial.printf("Rotating log file %s to %s\n", filename, backupFilename);
+    
+    // Check if backup file already exists, remove it if it does
+    if (SD.exists(backupFilename)) {
+        Serial.printf("Removing existing backup file %s\n", backupFilename);
+        SD.remove(backupFilename);
+    }
+    
+    // Rename the current log file to the backup name
+    if (!SD.rename(filename, backupFilename)) {
+        Serial.printf("Failed to rename %s to %s!\n", filename, backupFilename);
+        return;
+    }
+    
+    // No need to create a new empty file - it will be created when needed
+    Serial.printf("Log rotation complete. New data will be written to a fresh %s\n", filename);
 }
 
 void InitialiseDisplay()
@@ -305,7 +373,7 @@ void InitialiseSystem()
     SPI.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);  // Initialise SPI bus for SD card
     ESP_ERROR_CHECK(i2cdev_init()); // Initialize the I2C bus for SHT41
     InitialiseDisplay();
-    setupSDCard();
+    initializeSDCard();
 }
 
 boolean SetTime()
@@ -317,8 +385,6 @@ boolean SetTime()
     delay(100);
     return UpdateLocalTime();
 }
-
-
 
 boolean UpdateLocalTime()
 {
@@ -337,7 +403,7 @@ boolean UpdateLocalTime()
     CurrentSec = timeinfo.tm_sec;
 
     // Print full date & time for debugging
-    Serial.printf("Current date: %s\n", asctime(&timeinfo));
+    Serial.printf("Time update complete - current date: %s\n", asctime(&timeinfo));
 
     // Format date based on unit system
     if (Units == "M") {
@@ -571,16 +637,47 @@ bool obtainWeatherData(WiFiClient &client, const String &RequestType)
 
 //################## Rendering functions ##################
 
-void Render_Screen0()
-{   // 4.7" e-paper display is 960x540 resolution
+// Array of function pointers to select different screens for display
+void (*screens[])(SensorData outsideData, SensorData insideData) = {Render_Screen0, Render_Screen1, Render_Screen2};
+
+// Takes current screenState, based on which selects and runs one of 3 screen rendering functions from (*screens[])(), if passed screenState is within range.
+void renderDisplay(volatile int &screenState) 
+{
+    static SensorData outsideData, insideData;
+    SensorData tempData;
+    
+    // Wait for two sensor data messages (inside & outside)
+    for (int i = 0; i < 2; i++) {
+        if (xQueueReceive(renderDataQueue, &tempData, pdMS_TO_TICKS(100)) == pdTRUE) {
+            if (strcmp(tempData.filename, "/outside_log.csv") == 0) {
+                outsideData = tempData;
+            } else if (strcmp(tempData.filename, "/inside_log.csv") == 0) {
+                insideData = tempData;
+            }
+        }
+    }
+
+    // Checking screenState correctness and by using "screens" calling appropriate Render_Screen function
+    if ((screenState >= 0) && (screenState < (sizeof(screens) / sizeof(screens[0])))) { 
+        screens[screenState](outsideData, insideData); // Passing insideData and outsideData to chosen rendering function
+        ESP_LOGI("DISPLAY", "Displaying screen nr: %d", screenState);
+    } else {
+        ESP_LOGW("DISPLAY", "Invalid screen state: %d. Defaulting to Screen 0.");
+        screens[0](outsideData, insideData);
+        screenState = 0;
+    }
+}
+
+void Render_Screen0(SensorData outsideData, SensorData insideData) // Main screen with OWM 4.7" e-paper display 960x540 resolution
+{   
     RenderStatusSection(600, 20, wifi_signal); // Wi-Fi signal strength and Battery voltage
     RenderGeneralInfoSection();                // Top line of the display
 
     RenderWindSection(150, 160, WxConditions[0].Winddir, WxConditions[0].Windspeed*3.6, 100); // Converting wind speed from m/s to km/h for display
     RenderAstronomySection(5, 265);     // Astronomy section Sun rise/set, Moon phase and Moon icon
 
-    RenderSensorReadingsGarden(320, 35);
-    RenderSensorReadingsRoom(650, 35);
+    RenderSensorReadingsGarden(320, 35, outsideData);
+    RenderSensorReadingsRoom(650, 35, insideData);
 
     RenderMainWeatherSection(320, 180); // Centre section of display for Location, temperature, Weather report, current Wx Symbol
     RenderWeatherIcon(780, 300);        // Display weather icon    scale = Large
@@ -588,42 +685,29 @@ void Render_Screen0()
     RenderForecastSection(0, 370);    // 3hr forecast boxes (was 320x220)
 }
 
-void Render_Screen1()
-{   // XL Display of readings for almost blind grandpa
+void Render_Screen1(SensorData outsideData, SensorData insideData) // XL Display of readings for grandpa
+{   
     RenderStatusSection(600, 20, wifi_signal); // Wi-Fi signal strength and Battery voltage
     RenderGeneralInfoSection();                // Top line of the display
 
-    RenderXLSensorReadingsGarden(10, 35);
-    RenderXLSensorReadingsRoom(10+485, 35);
+    RenderXLSensorReadingsGarden(10, 35, outsideData);
+    RenderXLSensorReadingsRoom(10+485, 35, insideData);
     drawLine(480, 50, 480, 300, DarkGrey);
 }
 
-void Render_Screen2()
-{   // Graph Screen
+void Render_Screen2(SensorData outsideData, SensorData insideData) // Graph Screen
+{   
     RenderStatusSection(600, 20, wifi_signal); // Wi-Fi signal strength and Battery voltage
     RenderGeneralInfoSection();                // Top line of the display
 
     RenderGraphs();
 }
 
-// Array of function pointers to select different screens for display
-void (*screens[])() = {Render_Screen0, Render_Screen1, Render_Screen2};
-void renderDisplay(volatile int &screenState) 
-{
-    if ((screenState >= 0) && (screenState < (sizeof(screens) / sizeof(screens[0])))) {
-        screens[screenState]();
-        ESP_LOGI("DISPLAY", "Displaying screen nr: %d", screenState);
-    } else {
-        ESP_LOGW("DISPLAY", "Invalid screen state: %d. Defaulting to Screen 0.", screenState);
-        screens[0]();
-    }
-}
-
 void RenderStatusSection(int x, int y, int rssi)
 {
-    setFont(OpenSans10B);
+    setFont(OpenSansB10);
     DrawRSSI(x + 310, y + 15, rssi);
-    DrawBattery(x + 150, y);
+    DrawBattery(x + 150, y, voltageWS, batteryPercentageWS);
 }
 
 void RenderGeneralInfoSection()
@@ -632,7 +716,7 @@ void RenderGeneralInfoSection()
     //drawString(8, 9, City, LEFT);
     setFont(OpenSansB12);
     drawString(10, 1, Date_str, LEFT);
-    setFont(OpenSans10B);
+    setFont(OpenSansB10);
     drawString(320, 1, "Aktualizacja: " + String(ConvertUnixTimeForDisplay(time(NULL))), LEFT);
     drawLine(10, 33, 880, 33, DarkGrey);
 }
@@ -704,26 +788,24 @@ void RenderMainWeatherSection(int x, int y)
 
 void RenderWeatherIcon(int x, int y)
 {
-    RenderConditionsSection(x, y, WxConditions[0].Icon, LargeIcon);
+    RenderConditionsSection(x, y, WxConditions[0].Icon, ForecastIcon);
 }
 
 
-void RenderSensorReadingsGarden(int x, int y)
+void RenderSensorReadingsGarden(int x, int y, SensorData outsideData)
 {
-    if(dataReceivedFlag == true) 
+    if (outsideData.timestamp > 1700000000)  
     {
         setFont(OpenSansB12);
         drawString(x, y-3, "Czujnik OGRÓD", LEFT);
         setFont(OpenSans8B);
-        drawString(x, y+33, String(ConvertUnixTimeForDisplay(receivedData.timestamp)), LEFT);
+        drawString(x, y+33, String(ConvertUnixTimeForDisplay(outsideData.timestamp)), LEFT);
         setFont(OpenSansB28);
-        drawString(x, y+50, String(receivedData.temperature, 1) + "°", LEFT);
+        drawString(x, y+50, String(outsideData.temperature, 1) + "°", LEFT);
         setFont(OpenSansB24);
-        drawString(x+135, y+50, "   " + String(receivedData.humidity, 0) + "%", LEFT);
+        drawString(x+135, y+50, "   " + String(outsideData.humidity, 0) + "%", LEFT);
         setFont(OpenSansB18);
-        drawString(x, y+100, String(receivedData.pressure, 0) + " hPa", LEFT);
-
-        dataReceivedFlag == false;
+        drawString(x, y+100, String(outsideData.pressure, 0) + " hPa", LEFT);
     }
     else
     {
@@ -738,29 +820,18 @@ void RenderSensorReadingsGarden(int x, int y)
     }
 }
 
-void RenderSensorReadingsRoom(int x, int y)
+void RenderSensorReadingsRoom(int x, int y, SensorData insideData)
 {
-    SensorData tempData;
-    bool dataAvailable = false;
-
-    // Try to receive multiple times to empty queue
-    while (xQueueReceive(sensorDataQueue, &tempData, pdMS_TO_TICKS(500)) == pdTRUE)
+    if (insideData.timestamp > 1700000000) 
     {
-        localData = tempData;  // Store the latest received data
-        dataAvailable = true;
-    }
-
-    if (dataAvailable) 
-    {
-        ESP_LOGI("DISPLAY", "Local sensor data available.");
         setFont(OpenSansB12);
         drawString(x, y, "Czujnik DOM", LEFT);
         setFont(OpenSans8B);
-        drawString(x, y+32, String(ConvertUnixTimeForDisplay(localData.timestamp)), LEFT);
+        drawString(x, y+32, String(ConvertUnixTimeForDisplay(insideData.timestamp)), LEFT);
         setFont(OpenSansB28);
-        drawString(x, y+50, String(localData.temperature, 1) + "°", LEFT);
+        drawString(x, y+50, String(insideData.temperature, 1) + "°", LEFT);
         setFont(OpenSansB24);
-        drawString(x+135, y+50, "   " + String(localData.humidity, 0) + "%", LEFT);
+        drawString(x+135, y+50, "   " + String(insideData.humidity, 0) + "%", LEFT);
     }
     else
     {
@@ -774,20 +845,20 @@ void RenderSensorReadingsRoom(int x, int y)
     }    
 }
 
-void RenderXLSensorReadingsGarden(int x, int y)
+void RenderXLSensorReadingsGarden(int x, int y, SensorData outsideData)
 {
-    if(dataReceivedFlag == true) 
+    if (outsideData.timestamp > 1700000000)  
     {
         setFont(OpenSansB28);
         drawString(x, y-10, "Czujnik OGRÓD", LEFT);
         setFont(OpenSansB12);
-        drawString(x, y+75, String(ConvertUnixTimeForDisplay(receivedData.timestamp)), LEFT);
+        drawString(x, y+75, String(ConvertUnixTimeForDisplay(outsideData.timestamp)), LEFT);
         setFont(OpenSansB50);
-        drawString(x, y+100, String(receivedData.temperature, 1) + "°", LEFT);
+        drawString(x, y+100, String(outsideData.temperature, 1) + "°", LEFT);
         setFont(OpenSansB40);
-        drawString(x+220, y+100, "   " + String(receivedData.humidity, 0) + "%", LEFT);
+        drawString(x+220, y+100, "   " + String(outsideData.humidity, 0) + "%", LEFT);
         setFont(OpenSansB40);
-        drawString(x, y+200, String(receivedData.pressure, 0) + " hPa", LEFT);
+        drawString(x, y+200, String(outsideData.pressure, 0) + " hPa", LEFT);
 
         dataReceivedFlag == false;
     }
@@ -804,29 +875,19 @@ void RenderXLSensorReadingsGarden(int x, int y)
     }
 }
 
-void RenderXLSensorReadingsRoom(int x, int y)
+void RenderXLSensorReadingsRoom(int x, int y, SensorData insideData)
 {
-    SensorData tempData;
-    bool dataAvailable = false;
-
-    // Try to receive multiple times to empty queue
-    while (xQueueReceive(sensorDataQueue, &tempData, pdMS_TO_TICKS(500)) == pdTRUE)
-    {
-        localData = tempData;  // Store the latest received data
-        dataAvailable = true;
-    }
-
-    if (dataAvailable) 
+    if (insideData.timestamp > 1700000000) 
     {
         ESP_LOGI("DISPLAY", "Local sensor data available.");
         setFont(OpenSansB28);
         drawString(x, y, "Czujnik DOM", LEFT);
         setFont(OpenSansB12);
-        drawString(x, y+75, String(ConvertUnixTimeForDisplay(localData.timestamp)), LEFT);
+        drawString(x, y+75, String(ConvertUnixTimeForDisplay(insideData.timestamp)), LEFT);
         setFont(OpenSansB50);
-        drawString(x, y+100, String(localData.temperature, 1) + "°", LEFT);
+        drawString(x, y+100, String(insideData.temperature, 1) + "°", LEFT);
         setFont(OpenSansB40);
-        drawString(x+220, y+100, "   " + String(localData.humidity, 0) + "%", LEFT);
+        drawString(x+220, y+100, "   " + String(insideData.humidity, 0) + "%", LEFT);
     }
     else
     {
@@ -1143,13 +1204,44 @@ int JulianDate(int d, int m, int y)
     return j;
 }
 
+float measureBatteryVoltage()
+{
+    esp_adc_cal_characteristics_t adc_chars;
+    esp_adc_cal_value_t val_type = esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
+    if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF)
+    {
+        Serial.printf("eFuse Vref:%u mV", adc_chars.vref);
+        vref = adc_chars.vref;
+    }
+#if CONFIG_IDF_TARGET_ESP32
+    const uint8_t bat_adc_pin = 36;
+#else
+    const uint8_t bat_adc_pin = 14;
+#endif
+    float voltage = analogRead(bat_adc_pin) / 4096.0 * 6.566 * (vref / 1000.0);
+
+    return voltage;
+}
+
+uint8_t calcBatPercentage(float voltage)
+{
+    uint8_t percentage = 100;
+    percentage = (uint8_t)(2836.9625 * pow(voltage, 4) - 43987.4889 * pow(voltage, 3) + 255233.8134 * pow(voltage, 2) - 656689.7123 * voltage + 632041.7303);
+    if (voltage >= 4.20)
+        percentage = 100;
+    if (voltage <= 3.50)
+        percentage = 0;
+
+    return percentage;
+}
+
 void epd_update()
 {
     epd_draw_grayscale_image(epd_full_screen(), framebuffer); // Update the screen
 }
 
 
-// Tasks //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//################################### Tasks ######################################################################//
 
 // Web used for basic configuration, run by pressing USR_BUTTON during boot
 void ConfigWebServerTask(void *pvParameters)
@@ -1161,7 +1253,7 @@ void ConfigWebServerTask(void *pvParameters)
     // Keep the server running while waiting for config
     while (!configDone) 
     {
-        vTaskDelay(pdMS_TO_TICKS(100)); // Delay to avoid CPU blocking
+        vTaskDelay(pdMS_TO_TICKS(3000)); // Delay to avoid CPU blocking
     }
 
     Serial.println("Configuration completed. Stopping web server...");
@@ -1173,9 +1265,9 @@ void ConfigWebServerTask(void *pvParameters)
 // OpenWeather configuration setup / reading
 void ConfigTask(void *pvParameters) 
 {
-    // Wait for button press with 3 second timeout
-    Serial.println("Awaiting button press to start configuration web server (3 sec)...");
-    if (xSemaphoreTake(ButtonWakeSem, SECONDS_TO_TICKS(3)) == pdTRUE || !SPIFFS.exists("/config.json"))
+    // ConfigWebServer starts if button pressed within ~5 seconds of boot or missing config.json
+    Serial.println("Awaiting button press to start configuration web server (5 sec)...");
+    if (xSemaphoreTake(ButtonWakeSem, SECONDS_TO_TICKS(5)) == pdTRUE || !SPIFFS.exists("/config.json"))
     {
         Serial.println("Button pressed or config file missing. Starting configuration web server...");
         xTaskCreate(ConfigWebServerTask, "ConfigWebServerTask", 8192, NULL, 6, NULL);
@@ -1209,46 +1301,13 @@ void ConfigTask(void *pvParameters)
 
         // WakeupHour = strtok(json1["schedule_power"]["on_time"].as<const char *>());
         // SleepHour  = json1["schedule_power"]["off_time"].as<String>();
-        Serial.println("Config loaded successfully.");
+        Serial.println(" /config.json loaded successfully.");
         }
 
         configfile.close();
     }
     xSemaphoreGive(configSemaphore); // Signal the main task to continue
     vTaskDelete(NULL); // Delete the task when done - first boot
-}
-
-// SD Logging Task
-void SDLoggingTask(void *pvParameters) {
-    SensorLogEntry logEntry;
-    static int logCounter = 0;  // Track number of logs since last JSON update
-
-    while (1) {
-        // Wait indefinitely for new data in the queue
-        if (xQueueReceive(logQueue, &logEntry, portMAX_DELAY) == pdTRUE) {
-            // Open file for appending
-            File file = SD.open(logEntry.filename, FILE_APPEND);
-            if (!file) {
-                Serial.printf("Failed to open %s for writing!\n", logEntry.filename);
-                continue;
-            }
-
-            // Write data in CSV format
-            file.printf("%d,%.2f,%.1f,%.1f\n", logEntry.timestamp, logEntry.temperature, logEntry.humidity, logEntry.pressure);
-            file.close();
-            Serial.printf("Data logged to %s: %d, %.2f, %.1f, %f\n", 
-                          logEntry.filename, logEntry.timestamp, logEntry.temperature, logEntry.humidity, logEntry.pressure);
-            
-            // Maintain circular buffer
-            maintainCircularBuffer(logEntry.filename);
-
-            // **Update JSON only every 4 logs to reduce SD wear**
-            if (++logCounter >= 4) {
-                //generateJSONData();
-                logCounter = 0;  // Reset counter
-            }
-        }
-    }
 }
 
 // Task for obtaining i2c sensor reading
@@ -1258,20 +1317,26 @@ void SHT4xReadTask(void *pvParameters)
     SensorData sht4xdata;
     sht4xdata.pressure = 0;
     sht4xdata.timestamp = 0;
+    sht4xdata.filename = "/inside_log.csv";
+    sht4xdata.batPercentage = 100;
 
     //Init SHT4x sensor
     memset(&dev, 0, sizeof(sht4x_t));
     ESP_ERROR_CHECK(sht4x_init_desc(&dev, 0, I2C_MASTER_SDA, I2C_MASTER_SCL));
     ESP_ERROR_CHECK(sht4x_init(&dev));
-
-    // Get the measurement duration for high repeatability;
-    uint8_t duration = sht4x_get_measurement_duration(&dev);
+    uint8_t duration = sht4x_get_measurement_duration(&dev); // Get the measurement duration for high repeatability;
 
     while (1)
     {   
         // Wait for the semaphore to be given by the main task to start measurement
-        ESP_LOGI("SHT40", "Awaiting trigger to start local measurement...");
+        ESP_LOGI("SHT40", "Awaiting for trigger to start local measurement...");
         xSemaphoreTake(sht4xTriggerSem, portMAX_DELAY);
+
+        voltageWS = measureBatteryVoltage();
+        
+        batteryPercentageWS = calcBatPercentage(voltageWS); // Writing into global, sharing data with rendering functions
+        sht4xdata.batPercentage = batteryPercentageWS;
+        ESP_LOGW("BATT", "Battery voltage: %f, percentage: %d", voltageWS, batteryPercentageWS);
         
         // Trigger one measurement in single shot mode with high repeatability.
         ESP_ERROR_CHECK(sht4x_start_measurement(&dev));
@@ -1283,16 +1348,15 @@ void SHT4xReadTask(void *pvParameters)
         {
             sht4xdata.humidity -= 5; // Rough 5% correction factor
             sht4xdata.timestamp = time(NULL);
-            queueLogData("/inside_log.csv", sht4xdata.temperature, sht4xdata.humidity, 0, sht4xdata.timestamp);
-            ESP_LOGI("SHT40", "Timestamp: %lu, SHT40  - Temperature: %.2f °C, Humidity: %.2f %%", (unsigned long)xTaskGetTickCount(), sht4xdata.temperature, sht4xdata.humidity);
-
-            if (xQueueSend(sensorDataQueue, &sht4xdata, pdMS_TO_TICKS(5000)) != pdPASS) 
+            
+            if (xQueueSend(sensorDataQueue, &sht4xdata, pdMS_TO_TICKS(1000)) == pdPASS) 
             {
-                ESP_LOGI("SHT40", "Failed to send data to sensorDataQueue in time");
+                
+                ESP_LOGI("SHT40", "SHT40 Data enqueued SHT40 Temperature: %.2f °C, Humidity: %.2f Timestamp: %d", sht4xdata.temperature, sht4xdata.humidity, sht4xdata.timestamp);
             }
             else
             {
-                ESP_LOGI("SHT40", "SHT40 Data sent to sensorDataQueue");
+                ESP_LOGI("SHT40", "Failed to send data to sensorDataQueue in time");
             }
         }
         else
@@ -1303,87 +1367,141 @@ void SHT4xReadTask(void *pvParameters)
     }
 }
 
+//Data distributing task
+void dataDistributorTask(void *parameter) {
+    SensorData data;
+    
+    while (1) {
+        // Wait for new data from sensors
+        if (xQueueReceive(sensorDataQueue, &data, portMAX_DELAY) == pdTRUE) {
+
+            // Distribute to all subscribers
+            if (xQueueSend(renderDataQueue, &data, pdMS_TO_TICKS(10)) != pdTRUE) {
+                Serial.println("[WARNING] renderDataQueue is full! Data lost.");
+            }
+            if (xQueueSend(serverLatestQueue, &data, pdMS_TO_TICKS(10)) != pdTRUE) {
+                Serial.println("[WARNING] serverLatestQueue is full! Data lost.");
+            }
+            if (xQueueSend(csvLogQueue, &data, pdMS_TO_TICKS(10)) != pdTRUE) {
+                Serial.println("[WARNING] csvLogQueue is full! Data lost.");
+            }
+            
+            // Optional: Log distribution
+            Serial.printf("Distributed %s data: %.1f°C, %.1f%%, %.1fhPa, timestamp: %d\n", data.filename, data.temperature, data.humidity, data.pressure, data.timestamp);
+        }
+
+        // Small delay to prevent CPU hogging
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+// Updated SD Logging Task that includes file rotation
+void SDLogTask(void *pvParameters) {
+    SensorData logEntry;
+    while (1) {
+        // Wait indefinitely for new data in the queue
+        if (xQueueReceive(csvLogQueue, &logEntry, portMAX_DELAY) == pdTRUE) {
+
+            if (checkAndReinitSDCard() != sdCardInitialized)  {
+                Serial.println("SD card not available, data logging skipped!");
+                continue;
+            }
+            // Veryfing proper time assigment, in case any ESP hasn't set its NTP yet
+            if(logEntry.timestamp < 1700000000){
+                logEntry.timestamp = time(NULL);
+                Serial.printf("Received data to log with incorrect timestamp, adjusting to current time.");
+            }
+            // Check if we need to rotate the log file
+            rotateLogFile(logEntry.filename);
+            
+            // Open file for appending (will create if doesn't exist)
+            File file = SD.open(logEntry.filename, FILE_APPEND);
+            if (!file) {
+                Serial.printf("Failed to open %s for writing!\n", logEntry.filename);
+                // Mark card as potentially failed to trigger reinitialization
+                sdCardInitialized = false;
+                continue;
+            }
+            
+            // Write data in CSV format
+            file.printf("%d,%.2f,%.1f,%.1f,%d\n", logEntry.timestamp, logEntry.temperature, 
+                       logEntry.humidity, logEntry.pressure, logEntry.batPercentage);
+            file.close();
+            
+            Serial.printf("Data logged to %s: Ts: %d, t: %.1f, h: %.1f, p: %.1f, b: %d\n",
+                         logEntry.filename, logEntry.timestamp, logEntry.temperature, 
+                         logEntry.humidity, logEntry.pressure, logEntry.batPercentage);
+        }
+    }
+}
+
 // Task planned for lowering power consumption or entering sleep
-void IdleTask(void *pvParameters)
-{
+void IdleTask(void *pvParameters) {
     UpdateLocalTime();
-    epd_poweroff_all();
 
-    int currentMinutes = CurrentHour * 60 + CurrentMin; // Current time in minutes
-    int nextWakeMinutes = ((currentMinutes / 15) + 1) * 15; // Align to next 15-minute mark
+    
+    // Calculate sleep duration
+    int currentMinutes = CurrentHour * 60 + CurrentMin;
+    int nextWakeMinutes = ((currentMinutes / 15) + 1) * 15;
     int sleepDuration = (nextWakeMinutes - currentMinutes) * 60 - CurrentSec;
-
-    // Handle long sleep (e.g., overnight)
-    if (SleepHoursEnabled && (CurrentHour >= SleepHour || CurrentHour < WakeupHour))
-    {   
-        int wakeupMinutes = WakeupHour * 60; 
+    
+    // Handle overnight sleep
+    if (SleepHoursEnabled && (CurrentHour >= SleepHour || CurrentHour < WakeupHour)) 
+    {
+        int wakeupMinutes = WakeupHour * 60;
         sleepDuration = ((wakeupMinutes - currentMinutes + 1440) % 1440) * 60;
         Serial.printf("Sleeping until WakeupHour %02d:00\n", WakeupHour);
     }
-
-    Serial.printf("Idling for %d seconds, waking at next 15-min mark\n", sleepDuration);
     
-    // Set wakeup timer (1000000LL converts to Secs as unit = 1uSec)
-    esp_sleep_enable_timer_wakeup(sleepDuration * 1000000LL);
-
-    /*
-    //esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON); // Keep peripherals powered
-    //esp_sleep_enable_ext0_wakeup(USR_BUTTON, 0); // Wake up on button press
-    Serial.println("Awake for: " + String((millis() - StartTime) / 1000.0, 3) + " secs");
-    Serial.println("Entering " + String(SleepTimer) + " (secs) of sleep time");
-    */
-
-    //Select deep or light sleep (currently set to only idling)
-    if(DeepSleepEnabled == true)
+    Serial.printf("Idling for %d seconds, waking at next 15-min mark\n", sleepDuration);
+        
+    // Deep sleep if enabled
+    if(DeepSleepEnabled == true) 
     {
+        // Set wakeup timer
+        esp_sleep_enable_timer_wakeup(sleepDuration * 1000000LL);
         Serial.println("Starting deep sleep period");
         esp_deep_sleep_start();
-    }
-    else
-    {    
-        // Probe time to avoid too often OWM updates, reset flag
+    } 
+    else 
+    {
+        // Record start time and OWM reset flag
         IdleStartTime = esp_timer_get_time();
         skipOWMUpdate = false;
         
-        // Wait for either an ESP-NOW packet, a button press, or timeout
-        Serial.println("Idle until Button Press, ESP-NOW packet, or timeout...");
+        //Powersaving functions to be added here//
 
+        // Wait/Idle for 15 minutes or an wake-up event
+        Serial.println("Idle started until Button Press or timeout...");
         QueueSetMemberHandle_t eventTriggered = xQueueSelectFromSet(queueSet, SECONDS_TO_TICKS(sleepDuration));
+        
         if (eventTriggered == ButtonWakeSem) 
         {
-            screenState = (screenState + 1) % 3;
             Serial.println("Button pressed, switching screen: " + String(screenState));
-            xSemaphoreGive(dataExhangeCompleteSem);  // Bypass for ESP-NOW transmission timeout
-
-            // Reset the semaphore to allow future presses (for some reason interrupt from esp-now doesn't require it)
-            xSemaphoreTake(ButtonWakeSem, 0);
-        } 
-        else if (eventTriggered == ESPNowWakeSem) 
-        {
-            Serial.println("Woken up by ESP-NOW packet!");
+            screenState = (screenState + 1) % 3;
+            xSemaphoreGive(dataExhangeCompleteSem); // To avoid wait time when button switching
+            xSemaphoreTake(ButtonWakeSem, 0); // Taking semaphore to reset / enable interrupt to give it again
         }
+      /*else if (eventTriggered == ESPNowWakeSem) {
+            Serial.println("Woken up by ESP-NOW packet!");
+        }*/
         else 
         {
-            Serial.println("Idle time expired, proceeding with next cycle...");
+            ESP_LOGI("IDLE_TASK", "Idle time expired, proceeding with next cycle....");
         }
-        ESP_LOGI("SLEEP", "Idling finished.");
 
-        // Tests
-        Serial.println("POST IDLE Stack high watermark: " + String(uxTaskGetStackHighWaterMark(NULL)));
-        Serial.println("POST IDLE Free heap: " + String(esp_get_free_heap_size()));
+        xSemaphoreGive(sht4xTriggerSem); 
         
-        // Skip OWM update if less than 3 minutes passed since last sleep entry
+        // Skip OWM update if less than 3 minutes passed
         int64_t now = esp_timer_get_time();
-        if((now - IdleStartTime <= 180000000)) 
-        {
+        if((now - IdleStartTime <= 180000000)) {
             skipOWMUpdate = true;
-            ESP_LOGW("SLEEP", "Less than 3 minutes of sleep, skipping OWM update.");
+            ESP_LOGW("IDLE_TASK", "Less than 3 minutes of sleep, skipping OWM update.");
         }
-
     }
-
+    
     // Signal the main task to continue and delete current task
-    xSemaphoreGive(idleEndedSem); 
+    xSemaphoreGive(idleEndedSem);
     vTaskDelete(NULL);
 }
 
@@ -1394,16 +1512,14 @@ void WeatherUpdateTask(void *pvParameters)
     WiFiClient client;
     while (1)
     {
-        ESP_LOGI("wUpdate", "Awaiting OUTSIDE sensor data transmission (30s)...");
-        if(xSemaphoreTake(dataExhangeCompleteSem, pdMS_TO_TICKS(3000)) != pdTRUE) // Proceed if received packet (30s timeout) OR button press (same sem)
+        
+        ESP_LOGI("wUpdate", "Checking for ESP-NOW transaction completion (30s)...");
+        if(xSemaphoreTake(dataExhangeCompleteSem, SECONDS_TO_TICKS(30)) != pdTRUE) // Proceed if received ESP-NOW packet and sent ack during 30s timeout OR button has been pressed (same sem)
         {
             ESP_LOGE("wUpdate", "Failed to receive OUTSIDE sensor data in time.");
         }
 
-        // Trigger local sensor read
-        xSemaphoreGive(sht4xTriggerSem);
-
-        // Fetch OpeanWeatherMap data - skipping if already updated in last 3 mins
+        // Fetch OpeanWeatherMap data - skipping if was updated in last 3 mins
         if(skipOWMUpdate == false)
         {
             if (WiFiStatus == WL_CONNECTED && timeIsSet == true)
@@ -1427,17 +1543,22 @@ void WeatherUpdateTask(void *pvParameters)
             }
         }
 
-        // Render display
-        epd_poweron();
-        epd_clear(); // Clearing current display
-        memset(framebuffer, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2); // Clearing previous renders from framebuffer
-        if(xSemaphoreTake(sht4xCompleteSem, pdMS_TO_TICKS(3000)) != pdTRUE) // Waiting 3s for local measurements
-        {
-            ESP_LOGE("wUpdate", "Failed to take sht4xCompleteSem in time");
-        }
-        renderDisplay(screenState);
-        epd_update();
-        epd_poweroff_all();
+        // Display handling
+
+            // Clearing current display
+            epd_poweron();
+            epd_clear(); 
+            memset(framebuffer, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2); // Clearing previous renders from framebuffer
+
+            if(xSemaphoreTake(sht4xCompleteSem, pdMS_TO_TICKS(1000)) != pdTRUE) // Wait 1s for local measurement semaphore
+            {
+                ESP_LOGE("wUpdate", "Failed to take sht4xCompleteSem in time");
+            }
+            renderDisplay(screenState);
+
+            //Updating
+            epd_update();
+            epd_poweroff();
 
         // Initiating sleeping/idling task
         ESP_LOGI("wUpdate", "Initiating idle mode...");
@@ -1445,7 +1566,7 @@ void WeatherUpdateTask(void *pvParameters)
         if (xReturned != pdPASS) 
         {
             ESP_LOGE("wUpdate", "Failed to create IdleTask");
-            return;
+            vTaskDelay(pdMS_TO_TICKS(3000));
         }
         xSemaphoreTake(idleEndedSem, portMAX_DELAY);
 
@@ -1466,6 +1587,7 @@ void setup()
     dataExhangeCompleteSem = xSemaphoreCreateBinary();
     sht4xTriggerSem = xSemaphoreCreateBinary();
     sht4xCompleteSem = xSemaphoreCreateBinary();
+
     if (!configSemaphore || !idleEndedSem || !ButtonWakeSem || !ESPNowWakeSem || !dataExhangeCompleteSem || !sht4xTriggerSem || !sht4xCompleteSem) 
     {
         ESP_LOGE("SETUP", "Failed to create ALL semaphores");
@@ -1473,11 +1595,14 @@ void setup()
     }
     ESP_LOGI("SETUP", "All semaphores created successfully");
 
-
     // Create queues with error checking
     sensorDataQueue = xQueueCreate(10, sizeof(SensorData));
-    logQueue = xQueueCreate(10, sizeof(SensorLogEntry));
-    if (sensorDataQueue == NULL || logQueue == NULL) 
+    renderDataQueue = xQueueCreate(4, sizeof(SensorData));
+    serverLatestQueue = xQueueCreate(4, sizeof(SensorData));
+    csvLogQueue = xQueueCreate(12, sizeof(SensorData));
+
+
+    if (sensorDataQueue == NULL || renderDataQueue == NULL || serverLatestQueue == NULL || csvLogQueue == NULL) 
     {
         ESP_LOGE("SETUP", "Failed to create queues");
         return;
@@ -1545,6 +1670,13 @@ void setup()
         return;
     }
 
+    xReturned = xTaskCreate(dataDistributorTask, "dataDistributorTask", 4096, NULL, 6, NULL);
+    if (xReturned != pdPASS) 
+    {
+        ESP_LOGE("SETUP", "Failed to create SHT4x task");
+        return;
+    }
+
     xReturned = xTaskCreate(WeatherUpdateTask, "WeatherUpdateTask", 8192, NULL, 4, NULL);
     if (xReturned != pdPASS) 
     {
@@ -1552,10 +1684,10 @@ void setup()
         return;
     }
 
-    xReturned = xTaskCreate(SDLoggingTask, "SDLoggingTask", 8192, NULL, 2, NULL);
+    xReturned = xTaskCreate(SDLogTask, "SDLogTask", 8192, NULL, 2, NULL);
     if (xReturned != pdPASS) 
     {
-        ESP_LOGE("SETUP", "Failed to create SDLoggingTask Task");
+        ESP_LOGE("SETUP", "Failed to create SDLogTask Task");
         return;
     }
 
@@ -1563,7 +1695,8 @@ void setup()
 
     // Start logWebServer
     setupLogWebServer();
-    
+
+    xSemaphoreGive(sht4xTriggerSem); 
 }
 
 void loop()

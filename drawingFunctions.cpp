@@ -5,7 +5,8 @@
 
 //Icon modifiers: scale, offset, linesize
 const IconSize SmallIcon(8, 10, 5); // Previously sizes were defined as Small - scale 8
-const IconSize MediumIcon(12, 25, 5); 
+const IconSize MediumIcon(12, 25, 5);
+const IconSize ForecastIcon(18, 32, 5);
 const IconSize LargeIcon(20, 35, 5); // Large 20
 
 int wifi_signal, CurrentHour = 0, CurrentMin = 0, CurrentSec = 0, EventCnt = 0, vref = 1100;
@@ -13,35 +14,12 @@ int wifi_signal, CurrentHour = 0, CurrentMin = 0, CurrentSec = 0, EventCnt = 0, 
 GFXfont currentFont;
 uint8_t *framebuffer;
 
-void DrawBattery(int x, int y)
-{
-    uint8_t percentage = 100;
-    esp_adc_cal_characteristics_t adc_chars;
-    esp_adc_cal_value_t val_type = esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
-    if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF)
-    {
-        Serial.printf("eFuse Vref:%u mV", adc_chars.vref);
-        vref = adc_chars.vref;
-    }
-#if CONFIG_IDF_TARGET_ESP32
-    const uint8_t bat_adc_pin = 36;
-#else
-    const uint8_t bat_adc_pin = 14;
-#endif
-    float voltage = analogRead(bat_adc_pin) / 4096.0 * 6.566 * (vref / 1000.0);
-    if (voltage > 1)
-    { // Only display if there is a valid reading
-        Serial.println("\nVoltage = " + String(voltage));
-        percentage = 2836.9625 * pow(voltage, 4) - 43987.4889 * pow(voltage, 3) + 255233.8134 * pow(voltage, 2) - 656689.7123 * voltage + 632041.7303;
-        if (voltage >= 4.20)
-            percentage = 100;
-        if (voltage <= 3.20)
-            percentage = 0; // orig 3.5
+void DrawBattery(int x, int y, float voltage, uint8_t percentage)
+{           
         drawRect(x + 25, y - 14, 40, 15, Black);
         fillRect(x + 65, y - 10, 4, 7, Black);
         fillRect(x + 27, y - 12, 36 * percentage / 100.0, 11, Black);
         drawString(x + 75, y - 14, String(percentage) + "%  " + String(voltage, 1) + "v", LEFT);
-    }
 }
 
 void DrawRSSI(int x, int y, int rssi)
@@ -380,7 +358,7 @@ void DrawGraph(int x_pos, int y_pos, int gwidth, int gheight, float Y1Min, float
 {
 #define auto_scale_margin 0 // Sets the autoscale increment, so axis steps up fter a change of e.g. 3
 #define y_minor_axis 5      // 5 y-axis division markers
-    setFont(OpenSans10B);
+    setFont(OpenSansB10);
     int maxYscale = -10000;
     int minYscale = 10000;
     int last_x, last_y;
