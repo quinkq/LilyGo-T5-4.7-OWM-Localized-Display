@@ -1,29 +1,27 @@
-#include <Arduino.h>
-
 const bool DebugDisplayUpdate = false;
 
 // Change to your WiFi credentials
-String ssid     = "caladan";
-String password = "ELteide_2019";
+String ssid     = "Your WiFi SSID";
+String password = "Your PASSWORD";
 
 // Use your own API key by signing up for a free developer account at https://openweathermap.org/
-String apikey       = "207b3fa36cbf41e1c2bd2530f436f0c9";                      // See: https://openweathermap.org/
+String apikey       = "Your OWM API Key";                      // See: https://openweathermap.org/
 String server = "api.openweathermap.org";
 //http://api.openweathermap.org/data/2.5/forecast?q=Melksham,UK&APPID=your_OWM_API_key&mode=json&units=metric&cnt=40
 //http://api.openweathermap.org/data/2.5/weather?q=Melksham,UK&APPID=your_OWM_API_key&mode=json&units=metric&cnt=1
 
 //Set your location according to OWM locations
-String City             = "Gdansk";                          // Your home city See: http://bulk.openweathermap.org/sample/
-String Country          = "PL";                            // Your _ISO-3166-1_two-letter_country_code country code, on OWM find your nearest city and the country code is displayed
+String City             = "Bath";                          // Your home city See: http://bulk.openweathermap.org/sample/
+String Country          = "GB";                            // Your _ISO-3166-1_two-letter_country_code country code, on OWM find your nearest city and the country code is displayed
                                                            // https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes
-String Language         = "PL";                            // NOTE: Only the weather description is translated by OWM
+String Language         = "EN";                            // NOTE: Only the weather description is translated by OWM
                                                            // Examples: Arabic (AR) Czech (CZ) English (EN) Greek (EL) Persian(Farsi) (FA) Galician (GL) Hungarian (HU) Japanese (JA)
                                                            // Korean (KR) Latvian (LA) Lithuanian (LT) Macedonian (MK) Slovak (SK) Slovenian (SL) Vietnamese (VI)
 String Hemisphere       = "north";                         // or "south"  
 String Units            = "M";                             // Use 'M' for Metric or I for Imperial 
-String Timezone    = "CET-1CEST,M3.5.0,M10.5.0/3";  // Choose your time zone from: https://github.com/nayarsystems/posix_tz_db/blob/master/zones.csv 
+String Timezone    = "GMT0BST,M3.5.0/01,M10.5.0/02";  // Choose your time zone from: https://github.com/nayarsystems/posix_tz_db/blob/master/zones.csv 
                                                            // See below for examples
-String ntpServer   = "pool.ntp.org";             // Or, choose a time server close to you, but in most cases it's best to use pool.ntp.org to find an NTP server
+String ntpServer   = "0.uk.pool.ntp.org";             // Or, choose a time server close to you, but in most cases it's best to use pool.ntp.org to find an NTP server
                                                            // then the NTP system decides e.g. 0.pool.ntp.org, 1.pool.ntp.org as the NTP syem tries to find  the closest available servers
                                                            // EU "0.europe.pool.ntp.org"
                                                            // US "0.north-america.pool.ntp.org"
